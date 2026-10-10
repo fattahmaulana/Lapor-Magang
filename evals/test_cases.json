@@ -1,0 +1,152 @@
+[
+  {
+    "id": "eval-01",
+    "domain": "IT / Web Development",
+    "note": "tadi pagi benerin bug filter tanggal di modul absensi, siang deploy ke server staging tapi sempet bentrok merge branch git sama ryan"
+  },
+  {
+    "id": "eval-02",
+    "domain": "Administrasi Kantor",
+    "note": "merapikan arsip surat masuk bulan september, input nomor resi pengiriman ke spreadsheet divisi umum, sama cetak tanda terima berkas pimpinan"
+  },
+  {
+    "id": "eval-03",
+    "domain": "Logistik & Gudang",
+    "note": "cek kondisi fisik stok barang masuk di gudang barat, cocokkan surat jalan muatan dengan isi kardus, ada 2 boks yang lakbannya robek"
+  },
+  {
+    "id": "eval-04",
+    "domain": "Keuangan & Akuntansi",
+    "note": "merekap bukti kuitansi pengeluaran operasional petty cash minggu pertama oktober, cocokin nota bensin kurir, dan input ke software akuntansi"
+  },
+  {
+    "id": "eval-05",
+    "domain": "Pelayanan Pelanggan / CS",
+    "note": "menjawab 25 tiket komplain customer terkait kendala tracking paket pengiriman, eskalasi 3 kasus keterlambatan ke tim kurir ekspedisi"
+  },
+  {
+    "id": "eval-06",
+    "domain": "Teknik Jaringan / IT Support",
+    "note": "pemasangan kabel patch cord LAN baru di ruang meeting utama dan konfigurasi access point lantai 2 yang sempat putus sinyalnya"
+  },
+  {
+    "id": "eval-07",
+    "domain": "Pemasaran Digital",
+    "note": "bikin draf jadwal konten media sosial instagram untuk minggu depan, riset tren hashtag, dan diskusi desain banner promo bersama mentor"
+  },
+  {
+    "id": "eval-08",
+    "domain": "Desain Grafis / Multimedia",
+    "note": "revisi layout brosur program pelatihan kerja sesuai masukan kepala seksi, ganti palet warna sesuai pedoman branding instansi"
+  },
+  {
+    "id": "eval-09",
+    "domain": "Sumber Daya Manusia (HR)",
+    "note": "menyortir berkas lamaran posisi staf magang gelombang dua, mencatat kontak pelamar lolos skrining ke sistem rekrutmen"
+  },
+  {
+    "id": "eval-10",
+    "domain": "Pengadaan Barang & Jasa",
+    "note": "membuat perbandingan harga penawaran dari 3 vendor alat tulis kantor untuk pengajuan permohonan belanja divisi semester akhir"
+  },
+  {
+    "id": "eval-11",
+    "domain": "Kesehatan & Keselamatan Kerja (K3)",
+    "note": "inspeksi kelayakan tabung apar di bengkel pemeliharaan mesin, mencatat tanggal kedaluwarsa dan tekanan gauge indikator"
+  },
+  {
+    "id": "eval-12",
+    "domain": "Laboratorium / Quality Control",
+    "note": "pengambilan sampel air limbah olahan pabrik, menguji kadar ph dan kekeruhan di lab, lalu mencatat log harian instrumen"
+  },
+  {
+    "id": "eval-13",
+    "domain": "Operasional Perhotelan",
+    "note": "membantu proses check-in rombongan tamu dinas, membagikan kunci kamar dan menjelaskan fasilitas sarapan serta wifi hotel"
+  },
+  {
+    "id": "eval-14",
+    "domain": "Hukum & Legalitas",
+    "note": "membaca draf perjanjian kerja sama sewa ruang usaha, menandai klausul denda keterlambatan pembayaran yang belum disepakati"
+  },
+  {
+    "id": "eval-15",
+    "domain": "Pertanian / Agribisnis",
+    "note": "monitoring kelembaban tanah di green house pembibitan tomat, mengecek sistem irigasi tetes yang sempat mampet jalurnya"
+  },
+  {
+    "id": "eval-16",
+    "domain": "Pendidikan & Pelatihan",
+    "note": "menyiapkan modul materi presentasi dan presensi peserta pelatihan komputer dasar bagi staf pemula di balai latihan kerja"
+  },
+  {
+    "id": "eval-17",
+    "domain": "Hubungan Masyarakat (Humas)",
+    "note": "mendampingi peliputan kunjungan kerja dinas terkait ke lokasi workshop, memotret dokumentasi kegiatan untuk buletin bulanan"
+  },
+  {
+    "id": "eval-18",
+    "domain": "Teknik Sipil / Pengawasan Proyek",
+    "note": "menghitung volume pengecoran lantai dua gedung arsip bersama konsultan pengawas, mencatat slump test adukan beton ready mix"
+  },
+  {
+    "id": "eval-19",
+    "domain": "Perpustakaan & Dokumentasi",
+    "note": "klasifikasi buku referensi baru berdasarkan sistem desimal dewey, menempel barcode katalog dan merapikan rak buku referensi"
+  },
+  {
+    "id": "eval-20",
+    "domain": "Farmasi & Apotek",
+    "note": "menata stok obat sirup sesuai prinsip FEFO di lemari penyimpanan, mengecek suhu pendingin ruangan dan membersihkan rak etalase"
+  },
+  {
+    "id": "eval-21",
+    "domain": "Kuliner & Tata Boga",
+    "note": "persiapan bahan mise en place untuk makan siang prasmanan 100 porsi, memotong sayuran dan menakar bumbu marinasi ayam"
+  },
+  {
+    "id": "eval-22",
+    "domain": "Pemeliharaan Gedung (Facility)",
+    "note": "pemeriksaan berkala unit ac split di ruang aula pertemuan, membersihkan filter udara yang berdebu dan cek saluran pembuangan"
+  },
+  {
+    "id": "eval-23",
+    "domain": "Transportasi & Dispatcher",
+    "note": "mengatur jadwal penugasan armada kendaraan operasional kantor untuk antar jemput pimpinan dan pengantaran dokumen penting"
+  },
+  {
+    "id": "eval-24",
+    "domain": "Riset Pasar / Analis Data",
+    "note": "membersihkan data anomali hasil survei kepuasan pelanggan di spss, menghapus data duplikat responden yang tidak lengkap"
+  },
+  {
+    "id": "eval-25",
+    "domain": "Teknik Elektro / Kelistrikan",
+    "note": "pengukuran tegangan output pada panel distribusi sekunder, mengecek keseimbangan beban antar fasa saat jam beban puncak"
+  },
+  {
+    "id": "eval-26",
+    "domain": "Jurnalisme & Media",
+    "note": "transkrip rekaman wawancara narasumber pegiat umkm binaan, menulis draf awal artikel profil usaha untuk portal berita instansi"
+  },
+  {
+    "id": "eval-27",
+    "domain": "Kearsipan Elektronik",
+    "note": "pemindaian berkas sertifikat tanah fisik menjadi file pdf, memberi nama file sesuai nomor registrasi dan upload ke google drive"
+  },
+  {
+    "id": "eval-28",
+    "domain": "Pengawasan Mutu Pangan",
+    "note": "inspeksi kebersihan lini pengemasan biskuit, mengecek detektor logam kemasan dan mencatat lembar kerja monitoring sanitasi"
+  },
+  {
+    "id": "eval-29",
+    "domain": "Pajak & Fiskal",
+    "note": "menghitung pemotongan pph pasal 21 atas honorarium narasumber eksternal, membuat kode billing setoran pajak di djp online"
+  },
+  {
+    "id": "eval-30",
+    "domain": "Manajemen Aset",
+    "note": "pemberian label stiker qr code pada laptop dinas dan kursi kantor baru hasil pengadaan kuartal tiga untuk sensus barang milik negara"
+  }
+]

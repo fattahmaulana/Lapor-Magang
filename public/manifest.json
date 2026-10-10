@@ -1,0 +1,16 @@
+{
+  "name": "LaporMagang - Pengingat Laporan Maganghub",
+  "short_name": "LaporMagang",
+  "description": "Pengingat harian gratis dan draf laporan harian Maganghub Kemnaker sebelum 23.59.",
+  "start_url": "/app/hari-ini",
+  "display": "standalone",
+  "background_color": "#FAF9F6",
+  "theme_color": "#0F6E5C",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}

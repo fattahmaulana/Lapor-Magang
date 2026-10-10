@@ -1,0 +1,6 @@
+{
+  "name": "LaporMagang",
+  "description": "Pengingat harian gratis dan draf laporan harian Maganghub Kemnaker sebelum 23.59.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
