@@ -383,6 +383,16 @@ export default function ProfilPage() {
       // ignore
     }
     localDb.setCurrentUser(null);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('lm_today_draft');
+        Object.keys(localStorage).forEach((key) => {
+          if (key.startsWith('lm_draft_')) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch {}
+    }
     window.location.href = '/masuk';
   };
 

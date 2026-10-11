@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import {
   Clock,
   AlertTriangle,
@@ -18,11 +19,25 @@ import {
   MicOff,
 } from 'lucide-react';
 import type { ReportDraft } from '@/types/report';
-import { localDb } from '@/lib/local-db';
+import { localDb, type UserProfile } from '@/lib/local-db';
 import { useAppDialog } from '@/components/ui/dialog-provider';
+
+function getLocalTodayStr(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 export default function HariIniPage() {
   const { showProModal, showDialog } = useAppDialog();
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localDb.getCurrentUser();
+    }
+    return null;
+  });
   const [isPro, setIsPro] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       return Boolean(localDb.getCurrentUser()?.is_pro);
@@ -44,51 +59,115 @@ export default function HariIniPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [needsMoreInfo, setNeedsMoreInfo] = useState<{ question: string; reason: string } | null>(null);
 
+  const [draft, setDraft] = useState<ReportDraft | null>(null);
+  const [similarityScore, setSimilarityScore] = useState<number | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [isReported, setIsReported] = useState<boolean>(false);
+  const [showPwaPrompt, setShowPwaPrompt] = useState<boolean>(false);
+
   useEffect(() => {
+    // 1. Bersihkan legacy key global yang tidak scoped agar tidak membocorkan draf antar-user
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('lm_today_draft');
+      } catch {}
+    }
+
+    const todayStr = getLocalTodayStr();
+
+    // 2. Muat sesi akun aktif
     fetch('/api/auth/me')
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.status === 'success' && data.user) {
-          setIsPro(Boolean(data.user.is_pro));
-          localDb.setCurrentUser(data.user);
+      .then(async (data) => {
+        let activeUser = data?.status === 'success' && data.user ? data.user : null;
+        if (!activeUser) {
+          activeUser = localDb.getCurrentUser();
+        }
+
+        if (activeUser) {
+          setCurrentUser(activeUser);
+          setIsPro(Boolean(activeUser.is_pro));
+          localDb.setCurrentUser(activeUser);
+
+          // 3. Periksa status laporan hari ini milik pengguna aktif di server
+          try {
+            const resReports = await fetch('/api/reports');
+            const dataReports = await resReports.json();
+            if (dataReports.status === 'success' && Array.isArray(dataReports.data)) {
+              const todayReport = dataReports.data.find((r: { date: string }) => r.date === todayStr);
+              if (todayReport) {
+                if (todayReport.is_reported) {
+                  // Sudah lapor -> draf dihilangkan dari layar, status tanda lapor aktif
+                  setIsReported(true);
+                  setDraft(null);
+                  setNotes('');
+                  localStorage.removeItem(`lm_draft_${activeUser.id}_${todayStr}`);
+                  return;
+                } else {
+                  // Tersimpan tapi belum ditandai lapor
+                  setIsReported(false);
+                  setDraft({
+                    activity_desc: todayReport.activity_desc,
+                    learning_desc: todayReport.learning_desc,
+                    obstacle_desc: todayReport.obstacle_desc,
+                  });
+                  setNotes(todayReport.raw_notes || '');
+                  return;
+                }
+              }
+            }
+          } catch {
+            const past = localDb.getUserReports(activeUser.id);
+            const todayReport = past.find((r) => r.date === todayStr);
+            if (todayReport) {
+              if (todayReport.is_reported) {
+                setIsReported(true);
+                setDraft(null);
+                setNotes('');
+                localStorage.removeItem(`lm_draft_${activeUser.id}_${todayStr}`);
+                return;
+              } else {
+                setIsReported(false);
+                setDraft({
+                  activity_desc: todayReport.activity_desc,
+                  learning_desc: todayReport.learning_desc,
+                  obstacle_desc: todayReport.obstacle_desc,
+                });
+                setNotes(todayReport.raw_notes || '');
+                return;
+              }
+            }
+          }
+
+          // 4. Jika belum ada laporan di DB, cek draf lokal terisolasi khusus ID pengguna ini
+          const userDraftKey = `lm_draft_${activeUser.id}_${todayStr}`;
+          const savedScoped = localStorage.getItem(userDraftKey);
+          if (savedScoped) {
+            try {
+              const parsed = JSON.parse(savedScoped);
+              if (parsed.isReported) {
+                setIsReported(true);
+                setDraft(null);
+              } else {
+                setDraft(parsed.draft || null);
+                if (parsed.notes) setNotes(parsed.notes);
+              }
+            } catch {}
+          } else {
+            // User baru / belum generate hari ini -> kosong bersih
+            setDraft(null);
+            setIsReported(false);
+          }
         }
       })
       .catch(() => {
         const u = localDb.getCurrentUser();
-        setIsPro(Boolean(u?.is_pro));
+        if (u) {
+          setCurrentUser(u);
+          setIsPro(Boolean(u.is_pro));
+        }
       });
   }, []);
-  const [draft, setDraft] = useState<ReportDraft | null>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('lm_today_draft');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          return parsed.draft || null;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return null;
-  });
-  const [similarityScore, setSimilarityScore] = useState<number | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [isReported, setIsReported] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('lm_today_draft');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          return parsed.isReported || false;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    return false;
-  });
-  const [showPwaPrompt, setShowPwaPrompt] = useState<boolean>(false);
   const [timeLeft, setTimeLeft] = useState<{ hours: number; minutes: number; seconds: number; isUrgent: 'normal' | 'warning' | 'danger' }>({
     hours: 5,
     minutes: 7,
@@ -181,15 +260,19 @@ export default function HariIniPage() {
         }
         setShowPwaPrompt(true);
 
-        const todayStr = new Date().toISOString().split('T')[0];
-        localStorage.setItem(
-          'lm_today_draft',
-          JSON.stringify({
-            draft: data.data,
-            isReported,
-            date: todayStr,
-          })
-        );
+        const todayStr = getLocalTodayStr();
+        const uid = currentUser?.id || localDb.getCurrentUser()?.id;
+        if (uid) {
+          localStorage.setItem(
+            `lm_draft_${uid}_${todayStr}`,
+            JSON.stringify({
+              draft: data.data,
+              notes,
+              isReported: false,
+              date: todayStr,
+            })
+          );
+        }
 
         // Simpan ke database server & localDb
         fetch('/api/reports', {
@@ -239,37 +322,73 @@ export default function HariIniPage() {
 
   const handleToggleReported = () => {
     const nextState = !isReported;
-    setIsReported(nextState);
-    const todayStr = new Date().toISOString().split('T')[0];
-    if (draft) {
-      localStorage.setItem(
-        'lm_today_draft',
-        JSON.stringify({
-          draft,
-          isReported: nextState,
-          date: todayStr,
-        })
-      );
-      localDb.saveUserReport({
+    const todayStr = getLocalTodayStr();
+    const uid = currentUser?.id || localDb.getCurrentUser()?.id;
+
+    if (nextState) {
+      // 1. Pengguna menandai sudah lapor ke Maganghub
+      setIsReported(true);
+
+      const activeDraft = draft;
+      const reportData = {
         date: todayStr,
-        raw_notes: notes,
-        activity_desc: draft.activity_desc,
-        learning_desc: draft.learning_desc,
-        obstacle_desc: draft.obstacle_desc,
-        is_reported: nextState,
-      });
+        raw_notes: notes || 'Laporan harian magang',
+        activity_desc:
+          activeDraft?.activity_desc ||
+          notes ||
+          'Kegiatan pemagangan harian telah diselesaikan dan dilaporkan ke portal resmi.',
+        learning_desc:
+          activeDraft?.learning_desc ||
+          'Mengasah pemahaman teknis kerja profesional dan alur kerja tim pemagangan.',
+        obstacle_desc:
+          activeDraft?.obstacle_desc ||
+          'Tidak ada kendala kritis yang menghambat pelaksanaan kegiatan hari ini.',
+        is_reported: true,
+      };
+
+      // Simpan permanen ke database server & localDb untuk rekap & PPT
+      localDb.saveUserReport(reportData);
       fetch('/api/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: todayStr,
-          raw_notes: notes,
-          activity_desc: draft.activity_desc,
-          learning_desc: draft.learning_desc,
-          obstacle_desc: draft.obstacle_desc,
-          is_reported: nextState,
-        }),
+        body: JSON.stringify(reportData),
       }).catch(() => {});
+
+      // 2. Hilangkan draf dari layar dan bersihkan input catatan
+      setDraft(null);
+      setNotes('');
+      if (uid) {
+        localStorage.removeItem(`lm_draft_${uid}_${todayStr}`);
+      }
+
+      showDialog({
+        type: 'success',
+        title: 'Berhasil Ditandai Lapor',
+        message:
+          'Laporan hari ini telah ditandai lapor dan tersimpan aman di database akun Anda. Hasil draf telah dibersihkan dari layar dan siap digunakan kapan saja untuk Rekap Mingguan atau Pembuatan PPT.',
+      });
+    } else {
+      // Batal tandai lapor
+      setIsReported(false);
+      const reportData = {
+        date: todayStr,
+        raw_notes: notes,
+        activity_desc: draft?.activity_desc || 'Kegiatan pemagangan harian',
+        learning_desc: draft?.learning_desc || 'Pelajaran pemagangan harian',
+        obstacle_desc: draft?.obstacle_desc || 'Tidak ada kendala',
+        is_reported: false,
+      };
+
+      localDb.saveUserReport(reportData);
+      fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reportData),
+      }).catch(() => {});
+
+      if (uid) {
+        localStorage.removeItem(`lm_draft_${uid}_${todayStr}`);
+      }
     }
   };
 
@@ -502,6 +621,28 @@ export default function HariIniPage() {
           </button>
         </div>
       </div>
+
+      {/* Banner Konfirmasi Selesai Lapor & Aman di Database */}
+      {isReported && (
+        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-4 text-xs text-emerald-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-white text-sm">Laporan Hari Ini Telah Selesai Dilaporkan</p>
+              <p className="text-[11px] text-zinc-300 mt-1 leading-relaxed">
+                Data tersimpan aman di database privat akun Anda. Hasil draf di layar telah dibersihkan agar tidak menumpuk. Anda dapat mengakses riwayat atau membuat Dek Slide PPT kapan saja di menu Riwayat.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/app/riwayat"
+            className="inline-flex min-h-[38px] items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-xs font-bold text-zinc-950 hover:bg-emerald-400 transition shrink-0 shadow-sm"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>Riwayat & Buat PPT</span>
+          </Link>
+        </div>
+      )}
 
       {/* Formulir Input Catatan Kasar */}
       <div className="verity-card rounded-2xl p-4 shadow-sm">
