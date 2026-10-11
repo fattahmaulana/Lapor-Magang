@@ -422,25 +422,6 @@ export default function AdminPage() {
               </button>
             </form>
 
-            {/* Kotak Kredensial Bawaan Administrator */}
-            <div className="rounded-2xl border border-cyan-500/20 bg-cyan-950/20 p-3.5 text-xs text-zinc-300 space-y-1.5">
-              <span className="font-bold text-cyan-400 block">Kredensial Default Administrator:</span>
-              <div className="text-[11px] font-mono space-y-0.5 text-zinc-300">
-                <p>Email: <span className="text-white font-semibold">admin@lapormagang.id</span></p>
-                <p>Password: <span className="text-white font-semibold">AdminMagang2026!</span></p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setLoginEmail('admin@lapormagang.id');
-                  setLoginPassword('AdminMagang2026!');
-                }}
-                className="mt-1 text-[11px] font-bold text-cyan-400 hover:underline cursor-pointer"
-              >
-                Isi Otomatis Kredensial Ini →
-              </button>
-            </div>
-
             <div className="border-t border-white/[0.06] pt-4 text-center">
               <Link href="/" className="text-xs text-zinc-400 hover:text-white transition">
                 ← Kembali ke Beranda
