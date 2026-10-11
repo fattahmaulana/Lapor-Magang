@@ -231,12 +231,59 @@ export const serverDb = {
   async findUserByEmail(email: string): Promise<UserRecord | null> {
     const cleanEmail = email.trim().toLowerCase();
     const supabase = getSupabase();
+
+    // Kredensial hash deterministik untuk Super Administrator (AdminMagang2026!)
+    const DEFAULT_ADMIN_SALT = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+    const DEFAULT_ADMIN_HASH =
+      '17b413f581982259f7fc556ca6005954208509762dd4103c8122c5cff6dac87182e2d8b7d82fdad9ccb43f2167856e325020efc31aa8f623926accb23c19c630';
+
     if (supabase) {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
         .select('*')
         .ilike('email', cleanEmail)
         .maybeSingle();
+
+      if (cleanEmail === 'admin@lapormagang.id') {
+        if (!data) {
+          // Buat akun admin otomatis jika belum ada di Supabase
+          const newAdmin: UserRecord = {
+            id: '00000000-0000-0000-0000-000000000001',
+            email: 'admin@lapormagang.id',
+            username: 'admin',
+            password_hash: DEFAULT_ADMIN_HASH,
+            salt: DEFAULT_ADMIN_SALT,
+            full_name: 'Super Administrator',
+            instance_name: 'Pusat Kontrol LaporMagang',
+            timezone: 'WIB',
+            role: 'admin',
+            is_pro: true,
+            reminder_email_enabled: false,
+            reminder_email_time: '15:00',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          await supabase.from('profiles').upsert(newAdmin, { onConflict: 'email' });
+          return newAdmin;
+        }
+
+        // Jika profil admin ada di Supabase tapi password_hash kosong / belum ter-seed
+        if (!data.password_hash || !data.salt || data.role !== 'admin') {
+          await supabase
+            .from('profiles')
+            .update({
+              password_hash: DEFAULT_ADMIN_HASH,
+              salt: DEFAULT_ADMIN_SALT,
+              role: 'admin',
+              is_pro: true,
+            })
+            .eq('id', data.id);
+          data.password_hash = DEFAULT_ADMIN_HASH;
+          data.salt = DEFAULT_ADMIN_SALT;
+          data.role = 'admin';
+        }
+      }
+
       if (error) {
         console.error('Supabase findUserByEmail error:', error);
         return null;
@@ -256,6 +303,15 @@ export const serverDb = {
         .select('*')
         .eq('id', id)
         .maybeSingle();
+
+      if (data && data.email === 'admin@lapormagang.id') {
+        const DEFAULT_ADMIN_SALT = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+        const DEFAULT_ADMIN_HASH =
+          '17b413f581982259f7fc556ca6005954208509762dd4103c8122c5cff6dac87182e2d8b7d82fdad9ccb43f2167856e325020efc31aa8f623926accb23c19c630';
+        if (!data.password_hash) data.password_hash = DEFAULT_ADMIN_HASH;
+        if (!data.salt) data.salt = DEFAULT_ADMIN_SALT;
+      }
+
       if (error) {
         console.error('Supabase findUserById error:', error);
         return null;

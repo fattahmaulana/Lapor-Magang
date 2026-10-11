@@ -20,6 +20,7 @@ import {
   Bell,
   Calendar,
   Download,
+  Copy,
 } from 'lucide-react';
 import { localDb, UserProfile } from '@/lib/local-db';
 import { useAppDialog } from '@/components/ui/dialog-provider';
@@ -75,6 +76,14 @@ export default function ProfilPage() {
   const [selectedTier, setSelectedTier] = useState<ProTierId>('1m');
   const [paymentOrder, setPaymentOrder] = useState<ActivePaymentOrder | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [copiedQr, setCopiedQr] = useState(false);
+
+  const handleCopyQrString = () => {
+    if (!paymentOrder?.qrString) return;
+    navigator.clipboard.writeText(paymentOrder.qrString);
+    setCopiedQr(true);
+    setTimeout(() => setCopiedQr(false), 2000);
+  };
 
   const currentTierInfo = PRO_TIERS.find((t) => t.id === selectedTier) || PRO_TIERS[0];
 
@@ -502,6 +511,37 @@ export default function ProfilPage() {
                   <span className="text-[9px] text-zinc-600 font-mono mt-1 font-semibold">
                     QRIS • Standar Pembayaran Nasional
                   </span>
+                </div>
+              )}
+
+              {/* Bantuan Simulator Sandbox (Copy QR String) */}
+              {paymentOrder.qrString && (
+                <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 text-left space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-semibold text-zinc-300">
+                      Uji Coba Sandbox (Simulator)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyQrString}
+                      className="inline-flex items-center gap-1 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-300 hover:bg-cyan-500/20 transition cursor-pointer"
+                    >
+                      <Copy className="h-3 w-3" />
+                      <span>{copiedQr ? 'Tersalin!' : 'Salin QR String'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-zinc-400 leading-relaxed">
+                    Di simulator Midtrans Sandbox, masukkan <strong>QR String</strong> di atas ke kolom input simulator (bukan URL gambar).
+                  </p>
+                  <a
+                    href="https://simulator.sandbox.midtrans.com/qris/index"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-cyan-400 hover:underline"
+                  >
+                    <span>Buka Midtrans QRIS Simulator</span>
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
                 </div>
               )}
 

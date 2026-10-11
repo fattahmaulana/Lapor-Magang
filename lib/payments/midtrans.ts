@@ -80,10 +80,11 @@ export function verifyMidtransSignature(params: {
     return false;
   }
 
-  // Standar Midtrans: gross_amount jika float/int diformat persis seperti di payload
+  const cleanServerKey = serverKey.replace(/^["']|["']$/g, '').trim();
+
   const expectedHash = crypto
     .createHash('sha512')
-    .update(`${orderId}${statusCode}${grossAmount}${serverKey}`)
+    .update(`${orderId}${statusCode}${grossAmount}${cleanServerKey}`)
     .digest('hex');
 
   try {
@@ -105,10 +106,11 @@ export interface CreateQrisTransactionParams {
 export interface QrisTransactionResult {
   orderId: string;
   grossAmount: number;
-  qrString?: string;
-  qrImageUrl?: string;
+  qrString: string;
+  qrImageUrl: string;
   expiresAt: string;
   isMock: boolean;
+  midtransError?: string;
 }
 
 /**
@@ -117,7 +119,8 @@ export interface QrisTransactionResult {
 export async function createMidtransQrisCharge(
   params: CreateQrisTransactionParams
 ): Promise<QrisTransactionResult> {
-  const serverKey = process.env.MIDTRANS_SERVER_KEY?.trim();
+  const rawKey = process.env.MIDTRANS_SERVER_KEY || '';
+  const serverKey = rawKey.replace(/^["']|["']$/g, '').trim();
   const { orderId, packageDetails, userEmail, userName } = params;
 
   // Waktu kedaluwarsa QRIS: 15 menit dari sekarang
@@ -128,62 +131,69 @@ export async function createMidtransQrisCharge(
     const chargeUrl = getMidtransBaseUrl('charge');
     const authHeader = Buffer.from(`${serverKey}:`).toString('base64');
 
-    const response = await fetch(chargeUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        Authorization: `Basic ${authHeader}`,
-      },
-      body: JSON.stringify({
-        payment_type: 'qris',
-        transaction_details: {
-          order_id: orderId,
-          gross_amount: packageDetails.price,
+    try {
+      const response = await fetch(chargeUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          Authorization: `Basic ${authHeader}`,
         },
-        item_details: [
-          {
-            id: packageDetails.code,
-            price: packageDetails.price,
-            quantity: 1,
-            name: `${packageDetails.label} - LaporMagang`,
+        body: JSON.stringify({
+          payment_type: 'qris',
+          transaction_details: {
+            order_id: orderId,
+            gross_amount: packageDetails.price,
           },
-        ],
-        customer_details: {
-          email: userEmail,
-          first_name: userName || 'Peserta Magang',
-        },
-        qris: {
-          acquirer: 'gopay',
-        },
-      }),
-    });
+          item_details: [
+            {
+              id: packageDetails.code,
+              price: packageDetails.price,
+              quantity: 1,
+              name: `${packageDetails.label} - LaporMagang`,
+            },
+          ],
+          customer_details: {
+            email: userEmail,
+            first_name: userName || 'Peserta Magang',
+          },
+          qris: {
+            acquirer: 'gopay',
+          },
+        }),
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      const qrString = data.qr_string;
-      const qrAction = (data.actions || []).find(
-        (a: any) => a.name === 'generate-qr-code'
-      );
-      const qrImageUrl = qrAction?.url;
+      if (response.ok) {
+        const data = await response.json();
+        const qrString = data.qr_string || '';
 
-      return {
-        orderId,
-        grossAmount: packageDetails.price,
-        qrString,
-        qrImageUrl,
-        expiresAt: data.expiry_time || expiresAt,
-        isMock: false,
-      };
-    } else {
-      const errText = await response.text();
-      console.error('Midtrans Core API charge error:', errText);
+        // Gambar QR Code yang 100% bisa dibuka di browser publik tanpa auth header
+        const reliableQrImageUrl = qrString
+          ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=${encodeURIComponent(
+              qrString
+            )}`
+          : (data.actions || []).find((a: any) => a.name === 'generate-qr-code')?.url || '';
+
+        return {
+          orderId,
+          grossAmount: packageDetails.price,
+          qrString,
+          qrImageUrl: reliableQrImageUrl,
+          expiresAt: data.expiry_time || expiresAt,
+          isMock: false,
+        };
+      } else {
+        const errText = await response.text();
+        console.error('Midtrans Core API charge error:', errText);
+      }
+    } catch (fetchErr) {
+      console.error('Midtrans fetch network error:', fetchErr);
     }
   }
 
-  // Mock / Simulasi aman saat API Key sandbox belum terpasang di environment
+  // Mock / Simulasi saat kredensial Sandbox belum terkonfigurasi di Vercel
   const mockQrString = `00020101021226670014ID.LINKAJA.WWW01189360091100216091010215${orderId}520458125303360540${packageDetails.price}.005802ID5911LaporMagang6007Jakarta62170113${orderId}6304ABCD`;
-  const mockQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+  const mockQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=${encodeURIComponent(
     mockQrString
   )}`;
 

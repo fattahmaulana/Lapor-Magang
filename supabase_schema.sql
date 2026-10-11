@@ -144,9 +144,10 @@ CREATE POLICY "Allow all for server on admin_audit_logs"
   WITH CHECK (true);
 
 -- 8. DEFAULT SEED ADMIN (Kredensial Super Admin Awal)
--- Password default: AdminMagang2026!
+-- Email: admin@lapormagang.id
+-- Password: AdminMagang2026!
 INSERT INTO public.profiles (
-  id, email, username, full_name, instance_name, role, is_pro, timezone
+  id, email, username, full_name, instance_name, role, is_pro, timezone, password_hash, salt
 ) VALUES (
   '00000000-0000-0000-0000-000000000001',
   'admin@lapormagang.id',
@@ -155,5 +156,10 @@ INSERT INTO public.profiles (
   'Pusat Kontrol LaporMagang',
   'admin',
   true,
-  'WIB'
-) ON CONFLICT (email) DO NOTHING;
+  'WIB',
+  '17b413f581982259f7fc556ca6005954208509762dd4103c8122c5cff6dac87182e2d8b7d82fdad9ccb43f2167856e325020efc31aa8f623926accb23c19c630',
+  'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6'
+) ON CONFLICT (email) DO UPDATE SET
+  password_hash = EXCLUDED.password_hash,
+  salt = EXCLUDED.salt,
+  role = 'admin';
