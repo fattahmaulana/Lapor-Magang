@@ -16,7 +16,7 @@ async function main() {
     console.log('');
     runRlsSimulationTest();
     console.log('');
-    runAuthGuardTests();
+    await runAuthGuardTests();
     console.log('');
     await runRecapAndDeckTests();
     console.log('\n====================================================');

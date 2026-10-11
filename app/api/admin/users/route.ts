@@ -3,17 +3,17 @@ import { getAuthenticatedAdmin } from '@/lib/admin-auth';
 import { serverDb } from '@/lib/server-db';
 
 export async function GET(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
 
-  const users = serverDb.getAllUsers();
+  const users = await serverDb.getAllUsers();
   return NextResponse.json({ status: 'success', data: users });
 }
 
 export async function PUT(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
@@ -26,15 +26,15 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ status: 'error', message: 'Parameter userId dan status is_pro diperlukan.' }, { status: 400 });
     }
 
-    const targetUser = serverDb.findUserById(userId);
+    const targetUser = await serverDb.findUserById(userId);
     if (!targetUser) {
       return NextResponse.json({ status: 'error', message: 'Pengguna tidak ditemukan.' }, { status: 404 });
     }
 
-    serverDb.setUserPro(userId, is_pro);
+    await serverDb.setUserPro(userId, is_pro);
 
     // Catat ke audit log
-    serverDb.addAuditLog({
+    await serverDb.addAuditLog({
       admin_id: admin.id,
       admin_email: admin.email,
       target_user_id: targetUser.id,

@@ -4,7 +4,7 @@ import { serverDb } from '@/lib/server-db';
 export async function POST(req: NextRequest) {
   try {
     const sessionId = req.cookies.get('lm_session')?.value;
-    const user = sessionId ? serverDb.findUserById(sessionId) : null;
+    const user = sessionId ? await serverDb.findUserById(sessionId) : null;
 
     if (!user) {
       return NextResponse.json(
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Daftarkan sebagai pending_approval (Wajib persetujuan admin agar tidak ada yang curang/bohong)
-    const payment = serverDb.submitPaymentForApproval({
+    const payment = await serverDb.submitPaymentForApproval({
       order_id: orderId,
       user_id: user.id,
       user_email: user.email,

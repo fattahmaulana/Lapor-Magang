@@ -3,13 +3,13 @@ import { getAuthenticatedAdmin } from '@/lib/admin-auth';
 import { serverDb } from '@/lib/server-db';
 
 export async function GET(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
 
-  const stats = serverDb.getStats();
-  const auditLogs = serverDb.getAuditLogs();
+  const stats = await serverDb.getStats();
+  const auditLogs = await serverDb.getAuditLogs();
 
   return NextResponse.json({
     status: 'success',

@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       (transaction_status === 'success' && fraud_status !== 'deny');
 
     if (isSuccess && order_id) {
-      serverDb.settlePayment(order_id);
+      await serverDb.settlePayment(order_id);
     }
 
     return NextResponse.json({

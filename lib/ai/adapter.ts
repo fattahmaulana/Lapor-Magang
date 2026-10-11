@@ -8,9 +8,9 @@ import type {
 } from '@/types/report';
 import { serverDb } from '@/lib/server-db';
 
-function getActiveApiKey(): string | undefined {
+async function getActiveApiKey(): Promise<string | undefined> {
   try {
-    const fromPool = serverDb.getActiveAiKey();
+    const fromPool = await serverDb.getActiveAiKey();
     if (fromPool?.api_key && fromPool.api_key.trim().length > 10 && !fromPool.api_key.startsWith('AIzaSyTest')) {
       return fromPool.api_key;
     }
@@ -103,7 +103,7 @@ export async function generateReport(
     };
   }
 
-  const apiKey = getActiveApiKey();
+  const apiKey = await getActiveApiKey();
   if (!apiKey) {
     return generateHumanizedFallback(sanitizedNotes);
   }
@@ -248,7 +248,7 @@ export async function generateWeeklyRecap(
     created_at: l.created_at || new Date().toISOString(),
   }));
 
-  const apiKey = getActiveApiKey();
+  const apiKey = await getActiveApiKey();
 
   const defaultRecap: WeeklyRecap = {
     week_label: weekLabel,
@@ -379,7 +379,7 @@ export async function generatePresentationDeck(
 
   safeLogs.sort((a, b) => a.date.localeCompare(b.date));
 
-  const apiKey = getActiveApiKey();
+  const apiKey = await getActiveApiKey();
   const groupedWeeks = groupLogsByWeeks(safeLogs);
   const startDate = safeLogs[0]?.date || 'Awal';
   const endDate = safeLogs[safeLogs.length - 1]?.date || 'Akhir';
@@ -570,7 +570,7 @@ export async function transcribeAudio(
   audioBase64: string,
   mimeType = 'audio/webm'
 ): Promise<string> {
-  const apiKey = getActiveApiKey();
+  const apiKey = await getActiveApiKey();
   if (!apiKey) {
     return 'Hari ini saya fokus membantu penyelesaian tugas operasional dan koordinasi kerja di unit pemagangan.';
   }

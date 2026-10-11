@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ status: 'unauthorized', user: null }, { status: 401 });
   }
 
-  const user = serverDb.findUserById(sessionId);
+  const user = await serverDb.findUserById(sessionId);
   if (!user) {
     return NextResponse.json({ status: 'unauthorized', user: null }, { status: 401 });
   }

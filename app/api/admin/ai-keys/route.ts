@@ -3,17 +3,17 @@ import { getAuthenticatedAdmin } from '@/lib/admin-auth';
 import { serverDb } from '@/lib/server-db';
 
 export async function GET(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
 
-  const keys = serverDb.getAiKeys(true);
+  const keys = await serverDb.getAiKeys(true);
   return NextResponse.json({ status: 'success', data: keys });
 }
 
 export async function POST(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
@@ -26,13 +26,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: 'error', message: 'Kunci API AI wajib diisi dan valid.' }, { status: 400 });
     }
 
-    const created = serverDb.addAiKey({
+    const created = await serverDb.addAiKey({
       name: name || 'Kunci Gemini',
       provider: provider || 'gemini',
       api_key: api_key.trim(),
     });
 
-    serverDb.addAuditLog({
+    await serverDb.addAuditLog({
       admin_id: admin.id,
       admin_email: admin.email,
       target_user_id: 'system_ai_pool',
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
@@ -72,7 +72,7 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ status: 'error', message: 'ID kunci diperlukan.' }, { status: 400 });
     }
 
-    const toggled = serverDb.toggleAiKey(id);
+    const toggled = await serverDb.toggleAiKey(id);
     return NextResponse.json({ status: 'success', toggled });
   } catch {
     return NextResponse.json({ status: 'error', message: 'Gagal mengubah status kunci.' }, { status: 500 });
@@ -80,7 +80,7 @@ export async function PUT(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const admin = getAuthenticatedAdmin(req);
+  const admin = await getAuthenticatedAdmin(req);
   if (!admin) {
     return NextResponse.json({ status: 'unauthorized', message: 'Hanya admin yang memiliki hak akses.' }, { status: 403 });
   }
@@ -92,6 +92,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ status: 'error', message: 'ID kunci diperlukan.' }, { status: 400 });
   }
 
-  const deleted = serverDb.deleteAiKey(id);
+  const deleted = await serverDb.deleteAiKey(id);
   return NextResponse.json({ status: 'success', deleted });
 }

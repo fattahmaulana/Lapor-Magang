@@ -5,7 +5,7 @@ import { serverDb } from '@/lib/server-db';
 export async function POST(req: NextRequest) {
   try {
     const sessionId = req.cookies.get('lm_session')?.value;
-    const user = sessionId ? serverDb.findUserById(sessionId) : null;
+    const user = sessionId ? await serverDb.findUserById(sessionId) : null;
 
     if (!user) {
       return NextResponse.json(
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Simpan data order ke server database
-    serverDb.createPayment({
+    await serverDb.createPayment({
       order_id: transaction.orderId,
       user_id: user.id,
       user_email: user.email,

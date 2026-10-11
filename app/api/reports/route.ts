@@ -1,27 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { serverDb } from '@/lib/server-db';
 
-function getAuthenticatedUserId(req: NextRequest): string | null {
+async function getAuthenticatedUserId(req: NextRequest): Promise<string | null> {
   const sessionId = req.cookies.get('lm_session')?.value;
   if (!sessionId) return null;
-  const user = serverDb.findUserById(sessionId);
+  const user = await serverDb.findUserById(sessionId);
   return user ? user.id : null;
 }
 
 // GET: Ambil seluruh riwayat logbook milik pengguna aktif
 export async function GET(req: NextRequest) {
-  const userId = getAuthenticatedUserId(req);
+  const userId = await getAuthenticatedUserId(req);
   if (!userId) {
     return NextResponse.json({ status: 'unauthorized', message: 'Silakan masuk terlebih dahulu.' }, { status: 401 });
   }
 
-  const reports = serverDb.getReports(userId);
+  const reports = await serverDb.getReports(userId);
   return NextResponse.json({ status: 'success', data: reports });
 }
 
 // POST: Simpan atau perbarui logbook harian
 export async function POST(req: NextRequest) {
-  const userId = getAuthenticatedUserId(req);
+  const userId = await getAuthenticatedUserId(req);
   if (!userId) {
     return NextResponse.json({ status: 'unauthorized', message: 'Silakan masuk terlebih dahulu.' }, { status: 401 });
   }
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const saved = serverDb.saveReport(userId, {
+    const saved = await serverDb.saveReport(userId, {
       date,
       raw_notes,
       activity_desc,
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
 
 // DELETE: Hapus logbook
 export async function DELETE(req: NextRequest) {
-  const userId = getAuthenticatedUserId(req);
+  const userId = await getAuthenticatedUserId(req);
   if (!userId) {
     return NextResponse.json({ status: 'unauthorized', message: 'Silakan masuk terlebih dahulu.' }, { status: 401 });
   }
@@ -66,6 +66,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ status: 'error', message: 'ID laporan wajib disertakan.' }, { status: 400 });
   }
 
-  const deleted = serverDb.deleteReport(userId, reportId);
+  const deleted = await serverDb.deleteReport(userId, reportId);
   return NextResponse.json({ status: 'success', deleted });
 }

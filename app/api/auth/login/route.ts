@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const user = serverDb.findUserByEmail(email);
+    const user = await serverDb.findUserByEmail(email);
     if (!user) {
       return NextResponse.json(
         { status: 'error', message: 'Email atau password tidak sesuai.' },

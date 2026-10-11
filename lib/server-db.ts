@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { getSupabase } from './supabase';
 
 export interface UserRecord {
   id: string;
@@ -83,7 +84,16 @@ interface DatabaseSchema {
   ai_keys?: AiKeyRecord[];
 }
 
-const DB_FILE = path.join(process.cwd(), 'data', 'app_database.json');
+function getDbFile(): string {
+  try {
+    const defaultPath = path.join(process.cwd(), 'data', 'app_database.json');
+    const dir = path.dirname(defaultPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return defaultPath;
+  } catch {
+    return path.join('/tmp', 'app_database.json');
+  }
+}
 
 function seedAdminIfEmpty(db: DatabaseSchema): void {
   const hasAdmin = (db.users || []).some((u) => u.role === 'admin' || u.email === 'admin@lapormagang.id');
@@ -92,7 +102,7 @@ function seedAdminIfEmpty(db: DatabaseSchema): void {
     const password_hash = crypto.scryptSync('AdminMagang2026!', salt, 64).toString('hex');
     const now = new Date().toISOString();
     const adminUser: UserRecord = {
-      id: 'usr_admin_root',
+      id: '00000000-0000-0000-0000-000000000001',
       email: 'admin@lapormagang.id',
       username: 'admin',
       password_hash,
@@ -114,12 +124,13 @@ function seedAdminIfEmpty(db: DatabaseSchema): void {
 
 function readDb(): DatabaseSchema {
   try {
-    if (!fs.existsSync(DB_FILE)) {
+    const dbFile = getDbFile();
+    if (!fs.existsSync(dbFile)) {
       const initial: DatabaseSchema = { users: [], reports: [], payments: [], audit_logs: [], ai_keys: [] };
       seedAdminIfEmpty(initial);
       return initial;
     }
-    const data = fs.readFileSync(DB_FILE, 'utf-8');
+    const data = fs.readFileSync(dbFile, 'utf-8');
     const parsed = JSON.parse(data);
     parsed.ai_keys = parsed.ai_keys || [];
     seedAdminIfEmpty(parsed);
@@ -131,11 +142,12 @@ function readDb(): DatabaseSchema {
 
 function writeDb(data: DatabaseSchema): void {
   try {
-    const dir = path.dirname(DB_FILE);
+    const dbFile = getDbFile();
+    const dir = path.dirname(dbFile);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    fs.writeFileSync(dbFile, JSON.stringify(data, null, 2), 'utf-8');
   } catch (err) {
-    console.error('Failed to write database file:', err);
+    console.error('Failed to write database file fallback:', err);
   }
 }
 
@@ -155,22 +167,16 @@ export const serverDb = {
   },
 
   // USERS
-  createUser(params: {
+  async createUser(params: {
     email: string;
     password: string;
     full_name: string;
     instance_name: string;
-  }): UserRecord {
-    const db = readDb();
-    const existing = db.users.find((u) => u.email.toLowerCase() === params.email.toLowerCase());
-    if (existing) {
-      throw new Error('Alamat email sudah terdaftar.');
-    }
-
+  }): Promise<UserRecord> {
+    const supabase = getSupabase();
     const { hash, salt } = this.hashPassword(params.password);
     const now = new Date().toISOString();
-    const id = `usr_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
-
+    const id = crypto.randomUUID();
     const username = params.email.split('@')[0].toLowerCase().replace(/[^a-z0-9_]/g, '') || `user_${id.slice(-4)}`;
 
     const user: UserRecord = {
@@ -190,37 +196,108 @@ export const serverDb = {
       updated_at: now,
     };
 
+    if (supabase) {
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .ilike('email', user.email)
+        .maybeSingle();
+
+      if (existing) {
+        throw new Error('Alamat email sudah terdaftar.');
+      }
+
+      const { data, error } = await supabase.from('profiles').insert(user).select().single();
+      if (error) {
+        throw new Error(`Gagal menyimpan ke database Supabase: ${error.message}`);
+      }
+      return data as UserRecord;
+    }
+
+    const db = readDb();
+    const existing = db.users.find((u) => u.email.toLowerCase() === params.email.toLowerCase());
+    if (existing) {
+      throw new Error('Alamat email sudah terdaftar.');
+    }
     db.users.push(user);
     writeDb(db);
     return user;
   },
 
-  findUserByEmail(email: string): UserRecord | null {
+  async findUserByEmail(email: string): Promise<UserRecord | null> {
+    const cleanEmail = email.trim().toLowerCase();
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+      if (error) {
+        console.error('Supabase findUserByEmail error:', error);
+        return null;
+      }
+      return data ? (data as UserRecord) : null;
+    }
+
     const db = readDb();
-    return db.users.find((u) => u.email.toLowerCase() === email.trim().toLowerCase()) || null;
+    return db.users.find((u) => u.email.toLowerCase() === cleanEmail) || null;
   },
 
-  findUserById(id: string): UserRecord | null {
+  async findUserById(id: string): Promise<UserRecord | null> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) {
+        console.error('Supabase findUserById error:', error);
+        return null;
+      }
+      return data ? (data as UserRecord) : null;
+    }
+
     const db = readDb();
     return db.users.find((u) => u.id === id) || null;
   },
 
-  updateUser(id: string, updates: Partial<UserRecord>): UserRecord | null {
+  async updateUser(id: string, updates: Partial<UserRecord>): Promise<UserRecord | null> {
+    const supabase = getSupabase();
+    const updateData = {
+      ...updates,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .update(updateData)
+        .eq('id', id)
+        .select()
+        .maybeSingle();
+      if (error) {
+        console.error('Supabase updateUser error:', error);
+        return null;
+      }
+      return data ? (data as UserRecord) : null;
+    }
+
     const db = readDb();
     const idx = db.users.findIndex((u) => u.id === id);
     if (idx < 0) return null;
 
     db.users[idx] = {
       ...db.users[idx],
-      ...updates,
-      updated_at: new Date().toISOString(),
+      ...updateData,
     };
     writeDb(db);
     return db.users[idx];
   },
 
-  updatePassword(userId: string, oldPass: string, newPass: string): boolean {
-    const user = this.findUserById(userId);
+  async updatePassword(userId: string, oldPass: string, newPass: string): Promise<boolean> {
+    const user = await this.findUserById(userId);
     if (!user) throw new Error('Pengguna tidak ditemukan.');
 
     const isValid = this.verifyPassword(oldPass, user.password_hash, user.salt);
@@ -229,29 +306,51 @@ export const serverDb = {
     if (newPass.length < 10) throw new Error('Kata sandi baru minimal 10 karakter.');
 
     const { hash, salt } = this.hashPassword(newPass);
-    this.updateUser(userId, { password_hash: hash, salt });
+    await this.updateUser(userId, { password_hash: hash, salt });
     return true;
   },
 
-  deleteUser(userId: string): boolean {
+  async deleteUser(userId: string): Promise<boolean> {
+    const supabase = getSupabase();
+    if (supabase) {
+      await supabase.from('daily_reports').delete().eq('user_id', userId);
+      await supabase.from('payments').delete().eq('user_id', userId);
+      const { error } = await supabase.from('profiles').delete().eq('id', userId);
+      if (error) console.error('Supabase deleteUser error:', error);
+      return !error;
+    }
+
     const db = readDb();
     db.users = db.users.filter((u) => u.id !== userId);
-    // Hapus juga laporan pengguna (cascading delete)
     db.reports = db.reports.filter((r) => r.user_id !== userId);
     db.payments = db.payments.filter((p) => p.user_id !== userId);
     writeDb(db);
     return true;
   },
 
-  // REPORTS (Isolasi Row Level Security: hanya milik user_id)
-  getReports(userId: string): ReportRecord[] {
+  // REPORTS
+  async getReports(userId: string): Promise<ReportRecord[]> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('daily_reports')
+        .select('*')
+        .eq('user_id', userId)
+        .order('date', { ascending: false });
+      if (error) {
+        console.error('Supabase getReports error:', error);
+        return [];
+      }
+      return (data || []) as ReportRecord[];
+    }
+
     const db = readDb();
     return db.reports
       .filter((r) => r.user_id === userId)
       .sort((a, b) => b.date.localeCompare(a.date));
   },
 
-  saveReport(
+  async saveReport(
     userId: string,
     data: {
       date: string;
@@ -261,9 +360,37 @@ export const serverDb = {
       obstacle_desc: string;
       is_reported?: boolean;
     }
-  ): ReportRecord {
-    const db = readDb();
+  ): Promise<ReportRecord> {
     const now = new Date().toISOString();
+    const supabase = getSupabase();
+
+    if (supabase) {
+      const payload = {
+        user_id: userId,
+        date: data.date,
+        raw_notes: data.raw_notes || '',
+        activity_desc: data.activity_desc,
+        learning_desc: data.learning_desc,
+        obstacle_desc: data.obstacle_desc,
+        is_reported: data.is_reported ?? false,
+        reported_at: data.is_reported ? now : null,
+        updated_at: now,
+      };
+
+      const { data: saved, error } = await supabase
+        .from('daily_reports')
+        .upsert(payload, { onConflict: 'user_id,date' })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Supabase saveReport error:', error);
+        throw new Error(`Gagal menyimpan ke Supabase: ${error.message}`);
+      }
+      return saved as ReportRecord;
+    }
+
+    const db = readDb();
     const existingIdx = db.reports.findIndex(
       (r) => r.user_id === userId && r.date === data.date
     );
@@ -280,7 +407,7 @@ export const serverDb = {
       db.reports[existingIdx] = report;
     } else {
       report = {
-        id: `rep_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,
+        id: crypto.randomUUID(),
         user_id: userId,
         date: data.date,
         raw_notes: data.raw_notes,
@@ -299,7 +426,17 @@ export const serverDb = {
     return report;
   },
 
-  deleteReport(userId: string, reportId: string): boolean {
+  async deleteReport(userId: string, reportId: string): Promise<boolean> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { error } = await supabase
+        .from('daily_reports')
+        .delete()
+        .eq('id', reportId)
+        .eq('user_id', userId);
+      return !error;
+    }
+
     const db = readDb();
     const beforeCount = db.reports.length;
     db.reports = db.reports.filter((r) => !(r.id === reportId && r.user_id === userId));
@@ -309,7 +446,7 @@ export const serverDb = {
   },
 
   // PAYMENTS
-  createPayment(data: {
+  async createPayment(data: {
     order_id: string;
     user_id: string;
     user_email: string;
@@ -318,10 +455,9 @@ export const serverDb = {
     payment_method?: string;
     snap_token?: string;
     snap_redirect_url?: string;
-  }): PaymentRecord {
-    const db = readDb();
+  }): Promise<PaymentRecord> {
     const payment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
+      id: crypto.randomUUID(),
       order_id: data.order_id,
       user_id: data.user_id,
       user_email: data.user_email,
@@ -333,12 +469,21 @@ export const serverDb = {
       snap_redirect_url: data.snap_redirect_url,
       created_at: new Date().toISOString(),
     };
+
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: saved, error } = await supabase.from('payments').insert(payment).select().single();
+      if (error) console.error('Supabase createPayment error:', error);
+      return (saved as PaymentRecord) || payment;
+    }
+
+    const db = readDb();
     db.payments.push(payment);
     writeDb(db);
     return payment;
   },
 
-  submitPaymentForApproval(data: {
+  async submitPaymentForApproval(data: {
     order_id: string;
     user_id: string;
     user_email: string;
@@ -347,13 +492,10 @@ export const serverDb = {
     gross_amount: number;
     payment_method?: string;
     note?: string;
-  }): PaymentRecord {
-    const db = readDb();
-    const existingIdx = db.payments.findIndex((p) => p.order_id === data.order_id);
+  }): Promise<PaymentRecord> {
     const now = new Date().toISOString();
-
     const payment: PaymentRecord = {
-      id: `pay_${Date.now()}`,
+      id: crypto.randomUUID(),
       order_id: data.order_id,
       user_id: data.user_id,
       user_email: data.user_email,
@@ -366,6 +508,19 @@ export const serverDb = {
       created_at: now,
     };
 
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: saved, error } = await supabase
+        .from('payments')
+        .upsert(payment, { onConflict: 'order_id' })
+        .select()
+        .single();
+      if (error) console.error('Supabase submitPaymentForApproval error:', error);
+      return (saved as PaymentRecord) || payment;
+    }
+
+    const db = readDb();
+    const existingIdx = db.payments.findIndex((p) => p.order_id === data.order_id);
     if (existingIdx >= 0) {
       db.payments[existingIdx] = {
         ...db.payments[existingIdx],
@@ -374,34 +529,80 @@ export const serverDb = {
     } else {
       db.payments.unshift(payment);
     }
-
     writeDb(db);
     return payment;
   },
 
-  getAllPayments(): PaymentRecord[] {
+  async getAllPayments(): Promise<PaymentRecord[]> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Supabase getAllPayments error:', error);
+        return [];
+      }
+      return (data || []) as PaymentRecord[];
+    }
+
     const db = readDb();
     return (db.payments || []).sort((a, b) => b.created_at.localeCompare(a.created_at));
   },
 
-  approvePayment(orderId: string, adminId: string, adminEmail: string): boolean {
+  async approvePayment(orderId: string, adminId: string, adminEmail: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const supabase = getSupabase();
+
+    if (supabase) {
+      const { data: payment } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle();
+
+      if (!payment) return false;
+
+      await supabase
+        .from('payments')
+        .update({ status: 'settlement', settled_at: now })
+        .eq('order_id', orderId);
+
+      await supabase
+        .from('profiles')
+        .update({ is_pro: true, updated_at: now })
+        .eq('id', payment.user_id);
+
+      await this.addAuditLog({
+        admin_id: adminId,
+        admin_email: adminEmail,
+        target_user_id: payment.user_id,
+        target_email: payment.user_email,
+        action: 'APPROVE_QRIS_PAYMENT',
+        tier: payment.tier,
+        reason: `Verifikasi & aktivasi Pro untuk Order ${orderId} (Rp ${payment.gross_amount.toLocaleString('id-ID')})`,
+      });
+
+      return true;
+    }
+
     const db = readDb();
     const payment = db.payments.find((p) => p.order_id === orderId);
     if (!payment) return false;
 
     payment.status = 'settlement';
-    payment.settled_at = new Date().toISOString();
+    payment.settled_at = now;
 
-    // Aktifkan Pro pada user bersangkutan
     const user = db.users.find((u) => u.id === payment.user_id);
     if (user) {
       user.is_pro = true;
-      user.updated_at = new Date().toISOString();
+      user.updated_at = now;
     }
 
     writeDb(db);
 
-    this.addAuditLog({
+    await this.addAuditLog({
       admin_id: adminId,
       admin_email: adminEmail,
       target_user_id: payment.user_id,
@@ -414,7 +615,35 @@ export const serverDb = {
     return true;
   },
 
-  rejectPayment(orderId: string, adminId: string, adminEmail: string, reason: string): boolean {
+  async rejectPayment(orderId: string, adminId: string, adminEmail: string, reason: string): Promise<boolean> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: payment } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle();
+
+      if (!payment) return false;
+
+      await supabase
+        .from('payments')
+        .update({ status: 'failed', note: reason })
+        .eq('order_id', orderId);
+
+      await this.addAuditLog({
+        admin_id: adminId,
+        admin_email: adminEmail,
+        target_user_id: payment.user_id,
+        target_email: payment.user_email,
+        action: 'REJECT_QRIS_PAYMENT',
+        tier: payment.tier,
+        reason: reason || `Pembayaran Order ${orderId} ditolak oleh admin.`,
+      });
+
+      return true;
+    }
+
     const db = readDb();
     const payment = db.payments.find((p) => p.order_id === orderId);
     if (!payment) return false;
@@ -423,7 +652,7 @@ export const serverDb = {
     payment.note = reason;
     writeDb(db);
 
-    this.addAuditLog({
+    await this.addAuditLog({
       admin_id: adminId,
       admin_email: adminEmail,
       target_user_id: payment.user_id,
@@ -436,24 +665,59 @@ export const serverDb = {
     return true;
   },
 
-  getPayment(orderId: string): PaymentRecord | null {
+  async getPayment(orderId: string): Promise<PaymentRecord | null> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle();
+      if (error) return null;
+      return data ? (data as PaymentRecord) : null;
+    }
+
     const db = readDb();
     return db.payments.find((p) => p.order_id === orderId) || null;
   },
 
-  settlePayment(orderId: string): boolean {
+  async settlePayment(orderId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const supabase = getSupabase();
+
+    if (supabase) {
+      const { data: payment } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle();
+
+      if (!payment) return false;
+
+      await supabase
+        .from('payments')
+        .update({ status: 'settlement', settled_at: now })
+        .eq('order_id', orderId);
+
+      await supabase
+        .from('profiles')
+        .update({ is_pro: true, updated_at: now })
+        .eq('id', payment.user_id);
+
+      return true;
+    }
+
     const db = readDb();
     const payment = db.payments.find((p) => p.order_id === orderId);
     if (!payment) return false;
 
     payment.status = 'settlement';
-    payment.settled_at = new Date().toISOString();
+    payment.settled_at = now;
 
-    // Aktifkan Pro pada user bersangkutan
     const user = db.users.find((u) => u.id === payment.user_id);
     if (user) {
       user.is_pro = true;
-      user.updated_at = new Date().toISOString();
+      user.updated_at = now;
     }
 
     writeDb(db);
@@ -461,40 +725,114 @@ export const serverDb = {
   },
 
   // AUDIT LOGS
-  getAuditLogs(): AuditRecord[] {
+  async getAuditLogs(): Promise<AuditRecord[]> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('admin_audit_logs')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (error) return [];
+      return (data || []) as AuditRecord[];
+    }
+
     const db = readDb();
     return db.audit_logs.sort((a, b) => b.created_at.localeCompare(a.created_at));
   },
 
-  addAuditLog(data: Omit<AuditRecord, 'id' | 'created_at'>): AuditRecord {
-    const db = readDb();
+  async addAuditLog(data: Omit<AuditRecord, 'id' | 'created_at'>): Promise<AuditRecord> {
     const log: AuditRecord = {
-      id: `aud_${Date.now()}`,
+      id: crypto.randomUUID(),
       ...data,
       created_at: new Date().toISOString(),
     };
+
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: saved, error } = await supabase.from('admin_audit_logs').insert(log).select().single();
+      if (error) console.error('Supabase addAuditLog error:', error);
+      return (saved as AuditRecord) || log;
+    }
+
+    const db = readDb();
     db.audit_logs.push(log);
     writeDb(db);
     return log;
   },
 
   // ADMIN MONITORING & METRICS
-  getAllUsers(): Omit<UserRecord, 'password_hash' | 'salt'>[] {
+  async getAllUsers(): Promise<Omit<UserRecord, 'password_hash' | 'salt'>[]> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, email, username, full_name, instance_name, timezone, role, is_pro, pro_expires_at, reminder_email_enabled, reminder_email_time, telegram_chat_id, created_at, updated_at')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Supabase getAllUsers error:', error);
+        return [];
+      }
+      return (data || []) as Omit<UserRecord, 'password_hash' | 'salt'>[];
+    }
+
     const db = readDb();
     return db.users.map(({ password_hash, salt, ...u }) => u);
   },
 
-  setUserPro(userId: string, is_pro: boolean): boolean {
+  async setUserPro(userId: string, is_pro: boolean): Promise<boolean> {
+    const supabase = getSupabase();
+    const now = new Date().toISOString();
+    if (supabase) {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ is_pro, updated_at: now })
+        .eq('id', userId);
+      return !error;
+    }
+
     const db = readDb();
     const user = db.users.find((u) => u.id === userId);
     if (!user) return false;
     user.is_pro = is_pro;
-    user.updated_at = new Date().toISOString();
+    user.updated_at = now;
     writeDb(db);
     return true;
   },
 
-  getStats() {
+  async getStats() {
+    const supabase = getSupabase();
+    if (supabase) {
+      const [usersRes, reportsRes, paymentsRes, aiKeysRes] = await Promise.all([
+        supabase.from('profiles').select('id, is_pro'),
+        supabase.from('daily_reports').select('id', { count: 'exact', head: true }),
+        supabase.from('payments').select('id, status'),
+        supabase.from('ai_keys').select('id, is_active, usage_count'),
+      ]);
+
+      const users = usersRes.data || [];
+      const totalUsers = users.length;
+      const proUsers = users.filter((u) => u.is_pro).length;
+      const totalReports = reportsRes.count || 0;
+      const payments = paymentsRes.data || [];
+      const totalPayments = payments.filter((p) => p.status === 'settlement').length;
+      const pendingApprovals = payments.filter((p) => p.status === 'pending_approval').length;
+      const aiKeys = aiKeysRes.data || [];
+      const totalAiKeys = aiKeys.length;
+      const activeAiKeys = aiKeys.filter((k) => k.is_active).length;
+      const totalAiCalls = aiKeys.reduce((acc, k) => acc + (k.usage_count || 0), 0);
+
+      return {
+        totalUsers,
+        proUsers,
+        totalReports,
+        totalPayments,
+        pendingApprovals,
+        totalAiKeys,
+        activeAiKeys,
+        totalAiCalls,
+      };
+    }
+
     const db = readDb();
     const totalUsers = db.users.length;
     const proUsers = db.users.filter((u) => u.is_pro).length;
@@ -517,10 +855,19 @@ export const serverDb = {
     };
   },
 
-  // POOL KUNCI API AI (MULTI-KEY ROTATION & FAILOVER)
-  getAiKeys(masked = true): AiKeyRecord[] {
-    const db = readDb();
-    const keys = db.ai_keys || [];
+  // POOL KUNCI API AI
+  async getAiKeys(masked = true): Promise<AiKeyRecord[]> {
+    const supabase = getSupabase();
+    let keys: AiKeyRecord[] = [];
+
+    if (supabase) {
+      const { data, error } = await supabase.from('ai_keys').select('*').order('created_at', { ascending: false });
+      if (!error && data) keys = data as AiKeyRecord[];
+    } else {
+      const db = readDb();
+      keys = db.ai_keys || [];
+    }
+
     if (!masked) return keys;
     return keys.map((k) => ({
       ...k,
@@ -531,25 +878,41 @@ export const serverDb = {
     }));
   },
 
-  addAiKey(params: { name: string; provider?: 'gemini' | 'openai' | 'claude'; api_key: string }): AiKeyRecord {
-    const db = readDb();
-    db.ai_keys = db.ai_keys || [];
-    const id = `key_${Date.now().toString(36)}_${crypto.randomBytes(3).toString('hex')}`;
+  async addAiKey(params: { name: string; provider?: 'gemini' | 'openai' | 'claude'; api_key: string }): Promise<AiKeyRecord> {
+    const id = crypto.randomUUID();
     const newKey: AiKeyRecord = {
       id,
-      name: params.name.trim() || `API Key ${db.ai_keys.length + 1}`,
+      name: params.name.trim() || 'API Key',
       provider: params.provider || 'gemini',
       api_key: params.api_key.trim(),
       is_active: true,
       usage_count: 0,
       created_at: new Date().toISOString(),
     };
+
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase.from('ai_keys').insert(newKey).select().single();
+      if (error) console.error('Supabase addAiKey error:', error);
+      return (data as AiKeyRecord) || newKey;
+    }
+
+    const db = readDb();
+    db.ai_keys = db.ai_keys || [];
     db.ai_keys.push(newKey);
     writeDb(db);
     return newKey;
   },
 
-  toggleAiKey(id: string): boolean {
+  async toggleAiKey(id: string): Promise<boolean> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data: key } = await supabase.from('ai_keys').select('is_active').eq('id', id).maybeSingle();
+      if (!key) return false;
+      const { error } = await supabase.from('ai_keys').update({ is_active: !key.is_active }).eq('id', id);
+      return !error;
+    }
+
     const db = readDb();
     db.ai_keys = db.ai_keys || [];
     const key = db.ai_keys.find((k) => k.id === id);
@@ -559,7 +922,13 @@ export const serverDb = {
     return true;
   },
 
-  deleteAiKey(id: string): boolean {
+  async deleteAiKey(id: string): Promise<boolean> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { error } = await supabase.from('ai_keys').delete().eq('id', id);
+      return !error;
+    }
+
     const db = readDb();
     db.ai_keys = db.ai_keys || [];
     const initialLen = db.ai_keys.length;
@@ -571,12 +940,34 @@ export const serverDb = {
     return false;
   },
 
-  getActiveAiKey(): { id: string; api_key: string; provider: string } | null {
+  async getActiveAiKey(): Promise<{ id: string; api_key: string; provider: string } | null> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('ai_keys')
+        .select('*')
+        .eq('is_active', true)
+        .order('usage_count', { ascending: true })
+        .limit(1);
+
+      if (error || !data || data.length === 0) return null;
+      const selected = data[0] as AiKeyRecord;
+
+      await supabase
+        .from('ai_keys')
+        .update({
+          usage_count: (selected.usage_count || 0) + 1,
+          last_used_at: new Date().toISOString(),
+        })
+        .eq('id', selected.id);
+
+      return { id: selected.id, api_key: selected.api_key, provider: selected.provider };
+    }
+
     const db = readDb();
     const active = (db.ai_keys || []).filter((k) => k.is_active && k.api_key);
     if (active.length === 0) return null;
 
-    // Load balancing: ambil kunci dengan usage_count paling rendah
     active.sort((a, b) => a.usage_count - b.usage_count);
     const selected = active[0];
 

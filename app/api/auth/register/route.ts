@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const user = serverDb.createUser({
+    const user = await serverDb.createUser({
       email,
       password,
       full_name,

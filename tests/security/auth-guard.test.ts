@@ -9,7 +9,7 @@ import { serverDb } from '../../lib/server-db';
  * 4. Password hashing KDF aman (scrypt) & timing-safe verification
  * 5. Password salah ditolak
  */
-export function runAuthGuardTests() {
+export async function runAuthGuardTests() {
   console.log('--- MENJALANKAN TEST AUTENTIKASI & KEAMANAN PASSWORD ---');
 
   const checkAccess = (cookie?: string) => {
@@ -61,62 +61,62 @@ export function runAuthGuardTests() {
 
   // 6. CRUD Profil User (Username, Nama, Ganti Password, Hapus Akun)
   const testEmail = `crud_${Date.now()}@example.com`;
-  const created = serverDb.createUser({
+  const created = await serverDb.createUser({
     email: testEmail,
     password: 'PasswordLama123!',
     full_name: 'User CRUD Test',
     instance_name: 'Dinas Kominfo',
   });
 
-  serverDb.updateUser(created.id, { username: 'user_crud_baru', full_name: 'Nama Diperbarui' });
-  const readBack = serverDb.findUserById(created.id);
+  await serverDb.updateUser(created.id, { username: 'user_crud_baru', full_name: 'Nama Diperbarui' });
+  const readBack = await serverDb.findUserById(created.id);
   if (readBack?.username !== 'user_crud_baru' || readBack?.full_name !== 'Nama Diperbarui') {
     throw new Error('Test Auth 6 Gagal: Update profil gagal');
   }
 
-  serverDb.updatePassword(created.id, 'PasswordLama123!', 'PasswordBaru123!');
-  const userWithNewPwd = serverDb.findUserById(created.id);
+  await serverDb.updatePassword(created.id, 'PasswordLama123!', 'PasswordBaru123!');
+  const userWithNewPwd = await serverDb.findUserById(created.id);
   if (!serverDb.verifyPassword('PasswordBaru123!', userWithNewPwd!.password_hash, userWithNewPwd!.salt)) {
     throw new Error('Test Auth 6 Gagal: Ganti password gagal');
   }
 
-  serverDb.deleteUser(created.id);
-  if (serverDb.findUserById(created.id) !== null) {
+  await serverDb.deleteUser(created.id);
+  if ((await serverDb.findUserById(created.id)) !== null) {
     throw new Error('Test Auth 6 Gagal: Hapus akun gagal');
   }
   console.log('✓ Test 6 Lolos: CRUD Profil Pengguna (Edit Username/Nama, Ganti Password, Hapus Akun) berfungsi');
 
   // 7. Pool Kunci API AI Dinamis (Multi-Key Rotation & Load Balancing)
-  const key1 = serverDb.addAiKey({
+  const key1 = await serverDb.addAiKey({
     name: 'Gemini Test Key 1',
     provider: 'gemini',
     api_key: 'AIzaSyTestKeyOne12345',
   });
-  const key2 = serverDb.addAiKey({
+  const key2 = await serverDb.addAiKey({
     name: 'Gemini Test Key 2',
     provider: 'gemini',
     api_key: 'AIzaSyTestKeyTwo67890',
   });
 
-  const active1 = serverDb.getActiveAiKey();
-  const active2 = serverDb.getActiveAiKey();
+  const active1 = await serverDb.getActiveAiKey();
+  const active2 = await serverDb.getActiveAiKey();
   if (!active1 || !active2) {
     throw new Error('Test Auth 7 Gagal: Gagal mengambil active AI key dari pool');
   }
 
-  serverDb.deleteAiKey(key1.id);
-  serverDb.deleteAiKey(key2.id);
+  await serverDb.deleteAiKey(key1.id);
+  await serverDb.deleteAiKey(key2.id);
   console.log('✓ Test 7 Lolos: Pool Kunci API AI Dinamis (Multi-Key Rotation & Load Balancing) berfungsi');
 
   // 8. Pembayaran QRIS Manual & Alur Persetujuan Admin (Anti-Bohong)
-  const qrisUser = serverDb.createUser({
+  const qrisUser = await serverDb.createUser({
     email: `qris_${Date.now()}@example.com`,
     password: 'PasswordQris123!',
     full_name: 'User QRIS Test',
     instance_name: 'Dinas Kominfo',
   });
   const orderId = `LM-QRIS-TEST-${Date.now().toString().slice(-4)}`;
-  const qrisPayment = serverDb.submitPaymentForApproval({
+  const qrisPayment = await serverDb.submitPaymentForApproval({
     order_id: orderId,
     user_id: qrisUser.id,
     user_email: qrisUser.email,
@@ -127,18 +127,18 @@ export function runAuthGuardTests() {
   });
 
   // Saat baru submit, user TIDAK LANGSUNG PRO (mencegah klaim palsu)
-  const userBeforeApproval = serverDb.findUserById(qrisUser.id);
+  const userBeforeApproval = await serverDb.findUserById(qrisUser.id);
   if (userBeforeApproval?.is_pro) {
     throw new Error('Test Auth 8 Gagal: User langsung Pro tanpa persetujuan admin');
   }
 
   // Admin memeriksa mutasi dan menyetujui
-  serverDb.approvePayment(orderId, 'usr_admin_root', 'admin@lapormagang.id');
-  const userAfterApproval = serverDb.findUserById(qrisUser.id);
+  await serverDb.approvePayment(orderId, 'usr_admin_root', 'admin@lapormagang.id');
+  const userAfterApproval = await serverDb.findUserById(qrisUser.id);
   if (!userAfterApproval?.is_pro) {
     throw new Error('Test Auth 8 Gagal: Persetujuan admin gagal mengaktifkan status Pro');
   }
 
-  serverDb.deleteUser(qrisUser.id);
+  await serverDb.deleteUser(qrisUser.id);
   console.log('✓ Test 8 Lolos: Alur Persetujuan Pembayaran QRIS Admin (Anti-Bohong & Mutasi Akurat) berhasil');
 }

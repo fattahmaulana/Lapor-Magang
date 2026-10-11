@@ -7,7 +7,7 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ status: 'unauthorized', message: 'Silakan masuk terlebih dahulu.' }, { status: 401 });
   }
 
-  const user = serverDb.findUserById(sessionId);
+  const user = await serverDb.findUserById(sessionId);
   if (!user) {
     return NextResponse.json({ status: 'unauthorized', message: 'Pengguna tidak ditemukan.' }, { status: 401 });
   }
@@ -24,7 +24,7 @@ export async function PUT(req: NextRequest) {
           { status: 400 }
         );
       }
-      serverDb.updatePassword(user.id, old_password, new_password);
+      await serverDb.updatePassword(user.id, old_password, new_password);
     }
 
     // Update data profil
@@ -36,7 +36,7 @@ export async function PUT(req: NextRequest) {
     if (typeof body.reminder_email_enabled === 'boolean') updates.reminder_email_enabled = body.reminder_email_enabled;
     if (typeof body.reminder_email_time === 'string') updates.reminder_email_time = body.reminder_email_time;
 
-    const updated = serverDb.updateUser(user.id, updates);
+    const updated = await serverDb.updateUser(user.id, updates);
 
     return NextResponse.json({
       status: 'success',
@@ -69,7 +69,7 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    serverDb.deleteUser(sessionId);
+    await serverDb.deleteUser(sessionId);
 
     const response = NextResponse.json({
       status: 'success',
