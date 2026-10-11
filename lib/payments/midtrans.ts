@@ -1,19 +1,64 @@
 import crypto from 'crypto';
 
-export interface CreateOrderParams {
-  userId: string;
-  userEmail: string;
-  userName: string;
-  tier: 'pro_1_month' | 'pro_3_months' | 'pro_6_months';
-  amount: number;
+export type ProPackageCode = '1m' | '3m' | '6m';
+
+export interface PackageDetails {
+  code: ProPackageCode;
+  tierId: 'pro_1_month' | 'pro_3_months' | 'pro_6_months';
+  label: string;
+  price: number;
+  durationDays: number;
 }
 
-export interface MidtransOrderResponse {
-  orderId: string;
-  grossAmount: number;
-  snapToken?: string;
-  redirectUrl?: string;
-  tier: string;
+export const PRO_PACKAGES: Record<ProPackageCode, PackageDetails> = {
+  '1m': {
+    code: '1m',
+    tierId: 'pro_1_month',
+    label: 'Paket Pro 1 Bulan',
+    price: 5000,
+    durationDays: 30,
+  },
+  '3m': {
+    code: '3m',
+    tierId: 'pro_3_months',
+    label: 'Paket Pro 3 Bulan',
+    price: 12000,
+    durationDays: 90,
+  },
+  '6m': {
+    code: '6m',
+    tierId: 'pro_6_months',
+    label: 'Paket Pro 6 Bulan',
+    price: 22000,
+    durationDays: 180,
+  },
+};
+
+export function getPackageDetails(code: string): PackageDetails | null {
+  if (code in PRO_PACKAGES) {
+    return PRO_PACKAGES[code as ProPackageCode];
+  }
+  // Fallback untuk backward compatibility nama tier lama
+  if (code === 'pro_1_month') return PRO_PACKAGES['1m'];
+  if (code === 'pro_3_months') return PRO_PACKAGES['3m'];
+  if (code === 'pro_6_months') return PRO_PACKAGES['6m'];
+  return null;
+}
+
+export function isMidtransProduction(): boolean {
+  return process.env.MIDTRANS_IS_PRODUCTION === 'true';
+}
+
+export function getMidtransBaseUrl(type: 'charge' | 'snap' = 'charge'): string {
+  const isProd = isMidtransProduction();
+  if (type === 'snap') {
+    return isProd
+      ? 'https://app.midtrans.com/snap/v1/transactions'
+      : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
+  }
+  return isProd
+    ? 'https://api.midtrans.com/v2/charge'
+    : 'https://api.sandbox.midtrans.com/v2/charge';
 }
 
 export function generateMidtransOrderId(): string {
@@ -31,40 +76,59 @@ export function verifyMidtransSignature(params: {
   receivedSignature: string;
 }): boolean {
   const { orderId, statusCode, grossAmount, serverKey, receivedSignature } = params;
-  const hash = crypto
+  if (!orderId || !statusCode || !grossAmount || !serverKey || !receivedSignature) {
+    return false;
+  }
+
+  // Standar Midtrans: gross_amount jika float/int diformat persis seperti di payload
+  const expectedHash = crypto
     .createHash('sha512')
     .update(`${orderId}${statusCode}${grossAmount}${serverKey}`)
     .digest('hex');
 
   try {
-    const a = Buffer.from(hash, 'utf8');
-    const b = Buffer.from(receivedSignature, 'utf8');
+    const a = Buffer.from(expectedHash.toLowerCase(), 'utf8');
+    const b = Buffer.from(receivedSignature.toLowerCase(), 'utf8');
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
 }
 
+export interface CreateQrisTransactionParams {
+  orderId: string;
+  packageDetails: PackageDetails;
+  userEmail: string;
+  userName: string;
+}
+
+export interface QrisTransactionResult {
+  orderId: string;
+  grossAmount: number;
+  qrString?: string;
+  qrImageUrl?: string;
+  expiresAt: string;
+  isMock: boolean;
+}
+
 /**
- * Panggil API Resmi Midtrans Snap untuk membuat transaksi pembayaran
+ * Memanggil Midtrans Core API (/v2/charge) untuk membuat transaksi QRIS dinamis
  */
-export async function createMidtransSnapTransaction(
-  params: CreateOrderParams
-): Promise<MidtransOrderResponse> {
-  const orderId = generateMidtransOrderId();
-  const serverKey = process.env.MIDTRANS_SERVER_KEY;
-  const isProduction = process.env.MIDTRANS_IS_PRODUCTION === 'true';
+export async function createMidtransQrisCharge(
+  params: CreateQrisTransactionParams
+): Promise<QrisTransactionResult> {
+  const serverKey = process.env.MIDTRANS_SERVER_KEY?.trim();
+  const { orderId, packageDetails, userEmail, userName } = params;
 
-  const baseUrl = isProduction
-    ? 'https://app.midtrans.com/snap/v1/transactions'
-    : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
+  // Waktu kedaluwarsa QRIS: 15 menit dari sekarang
+  const expireDate = new Date(Date.now() + 15 * 60 * 1000);
+  const expiresAt = expireDate.toISOString();
 
-  let snapToken: string | undefined;
-  let redirectUrl: string | undefined;
-
-  if (serverKey) {
+  if (serverKey && !serverKey.startsWith('mock_') && serverKey !== 'test_server_key') {
+    const chargeUrl = getMidtransBaseUrl('charge');
     const authHeader = Buffer.from(`${serverKey}:`).toString('base64');
-    const response = await fetch(baseUrl, {
+
+    const response = await fetch(chargeUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -72,42 +136,63 @@ export async function createMidtransSnapTransaction(
         Authorization: `Basic ${authHeader}`,
       },
       body: JSON.stringify({
+        payment_type: 'qris',
         transaction_details: {
           order_id: orderId,
-          gross_amount: params.amount,
-        },
-        customer_details: {
-          email: params.userEmail,
-          first_name: params.userName,
+          gross_amount: packageDetails.price,
         },
         item_details: [
           {
-            id: params.tier,
-            price: params.amount,
+            id: packageDetails.code,
+            price: packageDetails.price,
             quantity: 1,
-            name: `Langganan LaporMagang (${params.tier})`,
+            name: `${packageDetails.label} - LaporMagang`,
           },
         ],
+        customer_details: {
+          email: userEmail,
+          first_name: userName || 'Peserta Magang',
+        },
+        qris: {
+          acquirer: 'gopay',
+        },
       }),
     });
 
     if (response.ok) {
       const data = await response.json();
-      snapToken = data.token;
-      redirectUrl = data.redirect_url;
+      const qrString = data.qr_string;
+      const qrAction = (data.actions || []).find(
+        (a: any) => a.name === 'generate-qr-code'
+      );
+      const qrImageUrl = qrAction?.url;
+
+      return {
+        orderId,
+        grossAmount: packageDetails.price,
+        qrString,
+        qrImageUrl,
+        expiresAt: data.expiry_time || expiresAt,
+        isMock: false,
+      };
+    } else {
+      const errText = await response.text();
+      console.error('Midtrans Core API charge error:', errText);
     }
   }
 
-  // Jika serverKey belum diisi di environment, arahkan ke URL instruksi setup
-  if (!redirectUrl) {
-    redirectUrl = `https://simulator.sandbox.midtrans.com/qris/index?order_id=${orderId}`;
-  }
+  // Mock / Simulasi aman saat API Key sandbox belum terpasang di environment
+  const mockQrString = `00020101021226670014ID.LINKAJA.WWW01189360091100216091010215${orderId}520458125303360540${packageDetails.price}.005802ID5911LaporMagang6007Jakarta62170113${orderId}6304ABCD`;
+  const mockQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+    mockQrString
+  )}`;
 
   return {
     orderId,
-    grossAmount: params.amount,
-    snapToken,
-    redirectUrl,
-    tier: params.tier,
+    grossAmount: packageDetails.price,
+    qrString: mockQrString,
+    qrImageUrl: mockQrImageUrl,
+    expiresAt,
+    isMock: true,
   };
 }

@@ -46,6 +46,7 @@ export interface PaymentRecord {
   gross_amount: number;
   payment_method: string;
   status: 'pending' | 'pending_approval' | 'settlement' | 'expired' | 'failed';
+  qris_url?: string;
   snap_token?: string;
   snap_redirect_url?: string;
   note?: string;
@@ -456,6 +457,7 @@ export const serverDb = {
     tier: 'pro_1_month' | 'pro_3_months' | 'pro_6_months';
     gross_amount: number;
     payment_method?: string;
+    qris_url?: string;
     snap_token?: string;
     snap_redirect_url?: string;
   }): Promise<PaymentRecord> {
@@ -466,8 +468,9 @@ export const serverDb = {
       user_email: data.user_email,
       tier: data.tier,
       gross_amount: data.gross_amount,
-      payment_method: data.payment_method || 'midtrans',
+      payment_method: data.payment_method || 'qris',
       status: 'pending',
+      qris_url: data.qris_url,
       snap_token: data.snap_token,
       snap_redirect_url: data.snap_redirect_url,
       created_at: new Date().toISOString(),
@@ -684,8 +687,33 @@ export const serverDb = {
     return db.payments.find((p) => p.order_id === orderId) || null;
   },
 
-  async settlePayment(orderId: string): Promise<boolean> {
-    const now = new Date().toISOString();
+  async updatePaymentStatus(
+    orderId: string,
+    status: 'pending' | 'settlement' | 'expired' | 'failed',
+    note?: string
+  ): Promise<boolean> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { error } = await supabase
+        .from('payments')
+        .update({ status, note, ...(status === 'settlement' ? { settled_at: new Date().toISOString() } : {}) })
+        .eq('order_id', orderId);
+      return !error;
+    }
+
+    const db = readDb();
+    const payment = db.payments.find((p) => p.order_id === orderId);
+    if (!payment) return false;
+    payment.status = status;
+    if (note) payment.note = note;
+    if (status === 'settlement') payment.settled_at = new Date().toISOString();
+    writeDb(db);
+    return true;
+  },
+
+  async settlePayment(orderId: string): Promise<{ success: boolean; alreadySettled: boolean }> {
+    const now = new Date();
+    const nowIso = now.toISOString();
     const supabase = getSupabase();
 
     if (supabase) {
@@ -695,36 +723,92 @@ export const serverDb = {
         .eq('order_id', orderId)
         .maybeSingle();
 
-      if (!payment) return false;
+      if (!payment) return { success: false, alreadySettled: false };
 
-      await supabase
+      // Idempoten: Jika order sudah settlement, jangan perpanjang lagi
+      if (payment.status === 'settlement') {
+        return { success: true, alreadySettled: true };
+      }
+
+      // Ambil user saat ini untuk hitung perpanjangan masa aktif kumulatif
+      const { data: user } = await supabase
+        .from('profiles')
+        .select('is_pro, pro_expires_at')
+        .eq('id', payment.user_id)
+        .maybeSingle();
+
+      let durationDays = 30;
+      if (payment.tier === 'pro_3_months') durationDays = 90;
+      if (payment.tier === 'pro_6_months') durationDays = 180;
+
+      let baseTime = now.getTime();
+      if (user?.is_pro && user?.pro_expires_at) {
+        const existingExpire = new Date(user.pro_expires_at).getTime();
+        if (existingExpire > baseTime) {
+          baseTime = existingExpire;
+        }
+      }
+
+      const newExpiresAt = new Date(baseTime + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+      // Update bersyarat (Hanya jika belum settlement untuk mencegah race condition)
+      const { error: paymentUpdateError } = await supabase
         .from('payments')
-        .update({ status: 'settlement', settled_at: now })
-        .eq('order_id', orderId);
+        .update({ status: 'settlement', settled_at: nowIso })
+        .eq('order_id', orderId)
+        .neq('status', 'settlement');
+
+      if (paymentUpdateError) {
+        console.error('Supabase settlePayment error:', paymentUpdateError);
+        return { success: false, alreadySettled: false };
+      }
 
       await supabase
         .from('profiles')
-        .update({ is_pro: true, updated_at: now })
+        .update({
+          is_pro: true,
+          pro_expires_at: newExpiresAt,
+          updated_at: nowIso,
+        })
         .eq('id', payment.user_id);
 
-      return true;
+      return { success: true, alreadySettled: false };
     }
 
     const db = readDb();
     const payment = db.payments.find((p) => p.order_id === orderId);
-    if (!payment) return false;
+    if (!payment) return { success: false, alreadySettled: false };
+
+    // Idempoten: Cek status memori
+    if (payment.status === 'settlement') {
+      return { success: true, alreadySettled: true };
+    }
 
     payment.status = 'settlement';
-    payment.settled_at = now;
+    payment.settled_at = nowIso;
 
     const user = db.users.find((u) => u.id === payment.user_id);
     if (user) {
+      let durationDays = 30;
+      if (payment.tier === 'pro_3_months') durationDays = 90;
+      if (payment.tier === 'pro_6_months') durationDays = 180;
+
+      let baseTime = now.getTime();
+      if (user.is_pro && user.pro_expires_at) {
+        const existingExpire = new Date(user.pro_expires_at).getTime();
+        if (existingExpire > baseTime) {
+          baseTime = existingExpire;
+        }
+      }
+
+      const newExpiresAt = new Date(baseTime + durationDays * 24 * 60 * 60 * 1000).toISOString();
       user.is_pro = true;
-      user.updated_at = now;
+      user.pro_expires_at = newExpiresAt;
+      user.updated_at = nowIso;
     }
 
     writeDb(db);
-    return true;
+    return { success: true, alreadySettled: false };
   },
 
   // AUDIT LOGS

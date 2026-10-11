@@ -26,12 +26,24 @@ import { useAppDialog } from '@/components/ui/dialog-provider';
 import { generateGoogleCalendarUrl, generateICalContent } from '@/lib/reminders/calendar';
 
 const PRO_TIERS = [
-  { id: 'pro_1_month', label: '1 Bulan', price: 'Rp5.000', amount: 5000, image: '/qris-5k.jpeg' },
-  { id: 'pro_3_months', label: '3 Bulan', price: 'Rp12.000', amount: 12000, image: '/qris-12k.jpeg' },
-  { id: 'pro_6_months', label: '6 Bulan', price: 'Rp22.000', amount: 22000, image: '/qris-22k.jpeg' },
+  { id: '1m', label: '1 Bulan', price: 'Rp5.000', amount: 5000 },
+  { id: '3m', label: '3 Bulan', price: 'Rp12.000', amount: 12000 },
+  { id: '6m', label: '6 Bulan', price: 'Rp22.000', amount: 22000 },
 ] as const;
 
 type ProTierId = (typeof PRO_TIERS)[number]['id'];
+
+interface ActivePaymentOrder {
+  orderId: string;
+  packageCode: ProTierId;
+  packageName: string;
+  grossAmount: number;
+  qrString?: string;
+  qrImageUrl?: string;
+  expiresAt: string;
+  status: 'pending' | 'settlement' | 'expired' | 'failed';
+  isMock?: boolean;
+}
 
 export default function ProfilPage() {
   const { showDialog } = useAppDialog();
@@ -59,23 +71,17 @@ export default function ProfilPage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  // Upgrade Pro state
-  const [selectedTier, setSelectedTier] = useState<ProTierId>('pro_1_month');
-  const [paymentOrder, setPaymentOrder] = useState<{
-    orderId: string;
-    amount: number;
-    redirectUrl?: string;
-  } | null>(null);
+  // Upgrade Pro state (Midtrans QRIS)
+  const [selectedTier, setSelectedTier] = useState<ProTierId>('1m');
+  const [paymentOrder, setPaymentOrder] = useState<ActivePaymentOrder | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
-  const [isPendingApproval, setIsPendingApproval] = useState(false);
 
   const currentTierInfo = PRO_TIERS.find((t) => t.id === selectedTier) || PRO_TIERS[0];
 
   const handleSelectTier = (tierId: ProTierId) => {
     setSelectedTier(tierId);
-    const tierObj = PRO_TIERS.find((t) => t.id === tierId) || PRO_TIERS[0];
-    if (paymentOrder) {
-      setPaymentOrder((prev) => (prev ? { ...prev, amount: tierObj.amount } : null));
+    if (paymentOrder && paymentOrder.status === 'pending') {
+      setPaymentOrder(null);
     }
   };
 
@@ -224,85 +230,106 @@ export default function ProfilPage() {
     }
   };
 
-  const handleCreatePayment = () => {
-    const shortId = Date.now().toString(36).slice(-5).toUpperCase();
-    const orderId = `LM-QRIS-${shortId}`;
+  // Auto-polling status pembayaran Midtrans setiap 3 detik
+  useEffect(() => {
+    if (!paymentOrder || paymentOrder.status !== 'pending') return;
 
-    setPaymentOrder({
-      orderId,
-      amount: currentTierInfo.amount,
-    });
-  };
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(
+          `/api/payments/status?orderId=${encodeURIComponent(paymentOrder.orderId)}`
+        );
+        const data = await res.json();
+        if (res.ok && data.status === 'success' && data.data) {
+          const { paymentStatus, isPro, proExpiresAt } = data.data;
 
-  const handleConfirmQrisPayment = async () => {
-    if (!paymentOrder) return;
+          if (paymentStatus === 'settlement' || isPro) {
+            setPaymentOrder((prev) => (prev ? { ...prev, status: 'settlement' } : null));
+            setUser((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    is_pro: true,
+                    pro_expires_at: proExpiresAt || prev.pro_expires_at,
+                  }
+                : null
+            );
+            const currentCached = localDb.getCurrentUser();
+            if (currentCached) {
+              localDb.setCurrentUser({
+                ...currentCached,
+                is_pro: true,
+                pro_expires_at: proExpiresAt || currentCached.pro_expires_at,
+              });
+            }
+            showDialog({
+              type: 'success',
+              title: '🎉 Pembayaran Berhasil Terverifikasi!',
+              message:
+                'Selamat! Akun Anda kini resmi aktif sebagai Paket Pro. Semua fitur AI & ekspor sudah terbuka.',
+            });
+          } else if (paymentStatus === 'expired') {
+            setPaymentOrder((prev) => (prev ? { ...prev, status: 'expired' } : null));
+            showDialog({
+              type: 'error',
+              title: 'Tagihan Kedaluwarsa',
+              message: 'Waktu pembayaran QRIS telah habis. Silakan buat transaksi baru.',
+            });
+          } else if (paymentStatus === 'failed') {
+            setPaymentOrder((prev) => (prev ? { ...prev, status: 'failed' } : null));
+            showDialog({
+              type: 'error',
+              title: 'Pembayaran Gagal',
+              message: 'Transaksi QRIS gagal atau dibatalkan.',
+            });
+          }
+        }
+      } catch {
+        // Abaikan kegagalan jaringan sementara saat polling
+      }
+    }, 3000);
+
+    return () => clearInterval(intervalId);
+  }, [paymentOrder, showDialog]);
+
+  const handleCreatePayment = async () => {
     setPaymentLoading(true);
 
     try {
-      const res = await fetch('/api/payments/confirm', {
+      const res = await fetch('/api/payments/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderId: paymentOrder.orderId,
-          tier: selectedTier,
-          amount: currentTierInfo.amount,
-        }),
+        body: JSON.stringify({ packageCode: selectedTier }),
       });
 
       const data = await res.json();
-      if (res.ok && data.status === 'success') {
-        setIsPendingApproval(true);
-        showDialog({
-          type: 'info',
-          title: '⏳ Menunggu Persetujuan Admin',
-          message:
-            'Konfirmasi transfer berhasil dikirim ke antrean admin! Admin akan memverifikasi mutasi dan mengaktifkan akun Pro Anda dalam 5–15 menit.',
+      if (res.ok && data.status === 'success' && data.order) {
+        setPaymentOrder({
+          orderId: data.order.orderId,
+          packageCode: selectedTier,
+          packageName: data.order.packageName,
+          grossAmount: data.order.grossAmount,
+          qrString: data.order.qrString,
+          qrImageUrl: data.order.qrImageUrl,
+          expiresAt: data.order.expiresAt,
+          status: 'pending',
+          isMock: data.order.isMock,
         });
       } else {
         showDialog({
           type: 'error',
-          title: 'Gagal Konfirmasi',
-          message: data.message || 'Gagal memproses konfirmasi pembayaran.',
+          title: 'Gagal Menyiapkan Tagihan',
+          message: data.message || 'Terjadi kendala saat menghubungi gateway Midtrans.',
         });
       }
     } catch {
       showDialog({
         type: 'error',
         title: 'Kendala Jaringan',
-        message: 'Gagal menghubungi server.',
+        message: 'Gagal menghubungi server untuk membuat tagihan QRIS.',
       });
     } finally {
       setPaymentLoading(false);
-    }
-  };
-
-  const handleCheckProStatus = async () => {
-    try {
-      const res = await fetch('/api/auth/me');
-      const data = await res.json();
-      if (data.user?.is_pro) {
-        setUser(data.user);
-        localDb.setCurrentUser(data.user);
-        setPaymentOrder(null);
-        setIsPendingApproval(false);
-        showDialog({
-          type: 'success',
-          title: '🎉 Pembayaran Telah Disetujui!',
-          message: 'Selamat! Akun Anda kini resmi aktif sebagai Paket Pro. Semua fitur AI & ekspor sudah terbuka.',
-        });
-      } else {
-        showDialog({
-          type: 'info',
-          title: 'Masih Diverifikasi',
-          message: 'Pembayaran Anda masih dalam antrean verifikasi admin. Mohon tunggu beberapa saat.',
-        });
-      }
-    } catch {
-      showDialog({
-        type: 'error',
-        title: 'Kendala Jaringan',
-        message: 'Gagal memeriksa status persetujuan.',
-      });
     }
   };
 
@@ -450,9 +477,10 @@ export default function ProfilPage() {
               <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
                 <div className="text-left">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 block font-mono">
-                    Pembayaran QRIS Nasional
+                    QRIS Dinamis (Midtrans)
                   </span>
-                  <h3 className="text-sm font-bold text-white">Fattah Maulana, Service</h3>
+                  <h3 className="text-sm font-bold text-white">Pembayaran Langganan Pro</h3>
+                  <span className="text-[9px] text-zinc-500 block">Bukan aplikasi resmi Kemnaker</span>
                 </div>
                 <button
                   onClick={() => setPaymentOrder(null)}
@@ -462,77 +490,60 @@ export default function ProfilPage() {
                 </button>
               </div>
 
-              {/* Tampilan Gambar QRIS Resmi Sesuai Paket */}
-              <div className="mx-auto max-w-[280px] overflow-hidden rounded-2xl border-2 border-white/20 bg-white p-2 shadow-2xl">
-                <Image
-                  src={currentTierInfo.image}
-                  alt={`QRIS Fattah Maulana, Service - ${currentTierInfo.label} (${currentTierInfo.price})`}
-                  width={280}
-                  height={380}
-                  className="w-full h-auto rounded-xl object-contain block"
-                  priority
-                />
-              </div>
+              {/* Tampilan Gambar QRIS Dinamis Midtrans */}
+              {paymentOrder.qrImageUrl && (
+                <div className="mx-auto max-w-[260px] overflow-hidden rounded-2xl border-2 border-white/20 bg-white p-3 shadow-2xl flex flex-col items-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={paymentOrder.qrImageUrl}
+                    alt={`QRIS Dinamis Midtrans - ${paymentOrder.packageName}`}
+                    className="w-full h-auto rounded-xl object-contain block"
+                  />
+                  <span className="text-[9px] text-zinc-600 font-mono mt-1 font-semibold">
+                    QRIS • Standar Pembayaran Nasional
+                  </span>
+                </div>
+              )}
 
               {/* Rincian Tagihan Akurat Real-time */}
               <div className="rounded-xl border border-cyan-500/20 bg-white/[0.03] p-3.5 text-center space-y-1">
                 <div className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 px-3 py-0.5 text-[11px] font-semibold text-cyan-300 mb-1">
-                  <span>Paket: {currentTierInfo.label}</span>
+                  <span>{paymentOrder.packageName}</span>
                 </div>
-                <span className="text-[11px] text-zinc-400 block">Total Nominal Transfer:</span>
+                <span className="text-[11px] text-zinc-400 block">Total Nominal:</span>
                 <div className="text-3xl font-extrabold text-cyan-300 tracking-tight">
-                  Rp {currentTierInfo.amount.toLocaleString('id-ID')}
+                  Rp {paymentOrder.grossAmount.toLocaleString('id-ID')}
                 </div>
                 <div className="flex items-center justify-center gap-2 text-[10px] text-zinc-400 font-mono pt-1">
-                  <span>NMID: ID1026613383482</span>
-                  <span>•</span>
                   <span>Order: {paymentOrder.orderId}</span>
+                  <span>•</span>
+                  <span>Tanpa Auto-Debit</span>
                 </div>
               </div>
 
-              {isPendingApproval ? (
-                <div className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-4 text-center space-y-2">
-                  <Clock className="h-6 w-6 text-amber-400 mx-auto animate-pulse" />
-                  <h4 className="text-xs font-bold text-amber-300">Konfirmasi Sedang Diverifikasi Admin</h4>
+              {/* Status Polling Real-time */}
+              {paymentOrder.status === 'pending' && (
+                <div className="rounded-2xl border border-cyan-500/30 bg-cyan-950/30 p-3.5 text-center space-y-2">
+                  <div className="flex items-center justify-center gap-2 text-xs font-semibold text-cyan-300">
+                    <Clock className="h-4 w-4 animate-spin text-cyan-400" />
+                    <span>Menunggu Pembayaran...</span>
+                  </div>
                   <p className="text-[11px] text-zinc-300 leading-relaxed">
-                    Bukti transfer Anda telah masuk antrean admin. Admin sedang mencocokkan mutasi QRIS untuk mengaktifkan status Pro.
+                    Buka m-Banking atau E-Wallet apa saja (BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay), scan kode QR di atas. Sistem mendeteksi pembayaran secara otomatis tanpa perlu kirim bukti transfer.
                   </p>
-                  <button
-                    onClick={handleCheckProStatus}
-                    className="mt-2 flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs font-semibold text-amber-300 hover:bg-amber-500/20 transition cursor-pointer"
-                  >
-                    <Check className="h-3.5 w-3.5" />
-                    <span>Cek Status Persetujuan</span>
-                  </button>
+                  <div className="flex items-center justify-center gap-1.5 text-[10px] text-zinc-400 font-mono">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+                    <span>Sinkronisasi otomatis aktif tiap 3 detik</span>
+                  </div>
                 </div>
-              ) : (
-                <>
-                  <div className="rounded-xl bg-cyan-950/20 border border-cyan-500/20 p-2.5 text-[11px] text-cyan-200 text-left">
-                    <p className="leading-relaxed">
-                      <strong>Cara Bayar:</strong> Buka m-Banking atau E-Wallet apa saja (BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay), scan gambar QRIS di atas, transfer tepat <strong>Rp {currentTierInfo.amount.toLocaleString('id-ID')}</strong>, lalu klik tombol di bawah untuk meminta persetujuan admin.
-                    </p>
-                  </div>
-
-                  {/* Tombol Konfirmasi Pembayaran */}
-                  <div className="space-y-2 pt-1">
-                    <button
-                      onClick={handleConfirmQrisPayment}
-                      disabled={paymentLoading}
-                      className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 text-xs font-bold text-zinc-950 hover:brightness-110 transition shadow-[0_0_20px_rgba(52,211,153,0.3)] disabled:opacity-50 cursor-pointer"
-                    >
-                      <Check className="h-4 w-4" />
-                      <span>{paymentLoading ? 'Mengirim...' : 'Kirim Bukti Transfer (Verifikasi Admin)'}</span>
-                    </button>
-
-                    <button
-                      onClick={() => setPaymentOrder(null)}
-                      className="w-full text-center text-xs text-zinc-400 hover:text-white py-1 cursor-pointer"
-                    >
-                      Ganti Pilihan Paket
-                    </button>
-                  </div>
-                </>
               )}
+
+              <button
+                onClick={() => setPaymentOrder(null)}
+                className="w-full text-center text-xs text-zinc-400 hover:text-white py-1 cursor-pointer"
+              >
+                Ganti Pilihan Paket
+              </button>
             </div>
           ) : (
             <button
@@ -541,7 +552,7 @@ export default function ProfilPage() {
               className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white text-xs font-bold text-zinc-950 hover:bg-zinc-200 transition shadow-[0_0_20px_rgba(255,255,255,0.2)] disabled:opacity-50 cursor-pointer"
             >
               <QrCode className="h-4 w-4" />
-              <span>{paymentLoading ? 'Menyiapkan Tagihan...' : 'Tampilkan Kode QRIS'}</span>
+              <span>{paymentLoading ? 'Menyiapkan QRIS Midtrans...' : 'Bayar dengan QRIS Dinamis'}</span>
             </button>
           )}
         </div>
@@ -553,7 +564,15 @@ export default function ProfilPage() {
             </div>
             <div>
               <span className="text-xs font-bold text-emerald-300 block">Akun Pro Aktif</span>
-              <span className="text-[11px] text-zinc-400">Seluruh fitur draf AI dan ekspor presentasi tidak dibatasi.</span>
+              <span className="text-[11px] text-zinc-400">
+                {user?.pro_expires_at
+                  ? `Aktif hingga ${new Date(user.pro_expires_at).toLocaleDateString('id-ID', {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}`
+                  : 'Seluruh fitur draf AI dan ekspor presentasi tidak dibatasi.'}
+              </span>
             </div>
           </div>
         </div>

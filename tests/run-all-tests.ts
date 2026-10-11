@@ -12,7 +12,7 @@ async function main() {
   try {
     runJaccardTests();
     console.log('');
-    runWebhookSecurityTests();
+    await runWebhookSecurityTests();
     console.log('');
     runRlsSimulationTest();
     console.log('');

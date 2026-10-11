@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createMidtransSnapTransaction } from '@/lib/payments/midtrans';
+import {
+  getPackageDetails,
+  generateMidtransOrderId,
+  createMidtransQrisCharge,
+} from '@/lib/payments/midtrans';
 import { serverDb } from '@/lib/server-db';
 
 export async function POST(req: NextRequest) {
@@ -14,39 +18,57 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
-    const { tier } = body;
+    const body = await req.json().catch(() => ({}));
+    const packageCodeInput = body.packageCode || body.tier || body.code;
 
-    let amount = 5000;
-    if (tier === 'pro_3_months') amount = 12000;
-    if (tier === 'pro_6_months') amount = 22000;
+    const packageDetails = getPackageDetails(packageCodeInput);
+    if (!packageDetails) {
+      return NextResponse.json(
+        {
+          status: 'error',
+          message: 'Kode paket tidak valid. Pilih 1m (1 bulan), 3m (3 bulan), atau 6m (6 bulan).',
+        },
+        { status: 400 }
+      );
+    }
 
-    const transaction = await createMidtransSnapTransaction({
-      userId: user.id,
+    // Buat orderId unik dan panggil Midtrans Core API QRIS dinamis
+    const orderId = generateMidtransOrderId();
+    const qrisCharge = await createMidtransQrisCharge({
+      orderId,
+      packageDetails,
       userEmail: user.email,
       userName: user.full_name || 'Peserta Magang',
-      tier: tier || 'pro_1_month',
-      amount,
     });
 
-    // Simpan data order ke server database
+    // Simpan order berstatus pending ke database
     await serverDb.createPayment({
-      order_id: transaction.orderId,
+      order_id: orderId,
       user_id: user.id,
       user_email: user.email,
-      tier: tier || 'pro_1_month',
-      gross_amount: amount,
-      snap_token: transaction.snapToken,
-      snap_redirect_url: transaction.redirectUrl,
+      tier: packageDetails.tierId,
+      gross_amount: packageDetails.price,
+      payment_method: 'qris',
+      qris_url: qrisCharge.qrImageUrl || qrisCharge.qrString,
     });
 
     return NextResponse.json({
       status: 'success',
-      order: transaction,
+      order: {
+        orderId,
+        packageCode: packageDetails.code,
+        packageName: packageDetails.label,
+        grossAmount: packageDetails.price,
+        qrString: qrisCharge.qrString,
+        qrImageUrl: qrisCharge.qrImageUrl,
+        expiresAt: qrisCharge.expiresAt,
+        isMock: qrisCharge.isMock,
+      },
     });
-  } catch {
+  } catch (error) {
+    console.error('Create payment error:', error);
     return NextResponse.json(
-      { status: 'error', message: 'Gagal membuat tagihan pembayaran Midtrans.' },
+      { status: 'error', message: 'Gagal membuat transaksi QRIS Midtrans.' },
       { status: 500 }
     );
   }

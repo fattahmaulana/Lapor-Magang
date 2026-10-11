@@ -66,6 +66,52 @@ npm run build
 
 Lihat referensi lengkap di `.env.example`.
 - `GEMINI_API_KEY`: Kunci API Gemini untuk adapter AI server-side.
-- `MIDTRANS_SERVER_KEY`: Kunci server untuk verifikasi webhook QRIS.
+- `NEXT_PUBLIC_SUPABASE_URL`: URL REST API project Supabase (contoh: `https://xyz.supabase.co`).
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Kunci Anon publik Supabase.
+- `SUPABASE_SERVICE_ROLE_KEY`: Kunci Service Role Supabase untuk operasi backend aman.
+- `MIDTRANS_SERVER_KEY`: Kunci server Midtrans (Sandbox/Production).
+- `MIDTRANS_CLIENT_KEY`: Kunci client Midtrans.
+- `MIDTRANS_IS_PRODUCTION`: `"false"` untuk Sandbox, `"true"` untuk Production.
 - `TELEGRAM_BOT_TOKEN`: Token bot Telegram untuk notifikasi interaktif.
 - `CRON_SCHEDULER_SECRET`: Token otorisasi constant-time untuk cron runner.
+
+---
+
+## 💳 Uji Pembayaran Sandbox (Midtrans QRIS)
+
+Berikut panduan menguji alur pembayaran QRIS dinamis dan aktivasi otomatis Paket Pro di lingkungan Sandbox:
+
+1. **Ambil Kunci Sandbox di Dashboard Midtrans:**
+   - Masuk ke [Midtrans Dashboard](https://dashboard.midtrans.com/).
+   - Pastikan toggle di pojok kiri atas berada pada mode **Sandbox Environment**.
+   - Buka menu **Settings** → **Access Keys**.
+   - Salin nilai **Server Key** dan **Client Key**.
+
+2. **Konfigurasi Environment Variable:**
+   - Masukkan ke file `.env.local` lokal Anda dan pada dashboard **Vercel** (Project Settings → Environment Variables):
+     ```env
+     MIDTRANS_SERVER_KEY="SB-Mid-server-xxxx..."
+     MIDTRANS_CLIENT_KEY="SB-Mid-client-xxxx..."
+     MIDTRANS_IS_PRODUCTION="false"
+     ```
+   - Redeploy aplikasi Anda di Vercel setelah variabel lingkungan disimpan.
+
+3. **Atur Payment Notification URL:**
+   - Di dashboard Midtrans Sandbox, buka **Settings** → **Configuration**.
+   - Masukkan URL webhook produksi/deploy Anda:
+     ```text
+     https://DOMAIN-SAYA.vercel.app/api/payments/webhook
+     ```
+   - Simpan pengaturan konfigurasi webhook.
+
+4. **Cara Simulasi Pembayaran:**
+   - Buka aplikasi Anda, masuk ke akun, lalu buka halaman **Profil** (`/app/profil`).
+   - Pilih paket (1 Bulan: Rp5.000, 3 Bulan: Rp12.000, atau 6 Bulan: Rp22.000).
+   - Klik **"Bayar dengan QRIS Dinamis"**. Salin string QR atau catat Order ID (`LM-...`).
+   - Buka [Midtrans Payment Simulator (QRIS)](https://simulator.sandbox.midtrans.com/qris/index).
+   - Masukkan Order ID atau scan string QRIS tersebut, lalu klik **"Pay"**.
+   - Server LaporMagang akan menerima notifikasi webhook, memvalidasi signature SHA-512 secara idempoten, dan status Pro di antarmuka web Anda akan langsung aktif otomatis dalam beberapa detik.
+
+> **Catatan Penting Menuju Production:**  
+> Ganti nilai `MIDTRANS_SERVER_KEY` dan `MIDTRANS_CLIENT_KEY` ke kredensial Production serta ubah `MIDTRANS_IS_PRODUCTION="true"` **hanya setelah verifikasi dan aktivasi akun bisnis Midtrans Anda resmi disetujui**.
+
