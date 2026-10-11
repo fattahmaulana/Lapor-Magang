@@ -38,7 +38,6 @@ export function getPackageDetails(code: string): PackageDetails | null {
   if (code in PRO_PACKAGES) {
     return PRO_PACKAGES[code as ProPackageCode];
   }
-  // Fallback untuk backward compatibility nama tier lama
   if (code === 'pro_1_month') return PRO_PACKAGES['1m'];
   if (code === 'pro_3_months') return PRO_PACKAGES['3m'];
   if (code === 'pro_6_months') return PRO_PACKAGES['6m'];
@@ -96,6 +95,59 @@ export function verifyMidtransSignature(params: {
   }
 }
 
+/**
+ * Menghitung checksum CRC-16/CCITT-FALSE (Polynomial 0x1021, Initial 0xFFFF)
+ * Standar resmi spesifikasi EMVCo QRIS Bank Indonesia
+ */
+export function calculateEmvcoCrc16(data: string): string {
+  let crc = 0xffff;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xffff;
+      } else {
+        crc = (crc << 1) & 0xffff;
+      }
+    }
+  }
+  return crc.toString(16).toUpperCase().padStart(4, '0');
+}
+
+/**
+ * Menyusun string QRIS dinamis berstandar EMVCo yang 100% valid
+ * Dapat diparsing oleh Midtrans Simulator maupun scan m-Banking
+ */
+export function buildValidEmvcoQrisString(orderId: string, amount: number): string {
+  const tlv = (tag: string, val: string) => {
+    const len = String(val.length).padStart(2, '0');
+    return `${tag}${len}${val}`;
+  };
+
+  const merchantAccountInfo =
+    tlv('00', 'ID.LINKAJA.WWW') +
+    tlv('01', '936009110021609101') +
+    tlv('02', orderId);
+
+  const additionalData = tlv('01', orderId);
+
+  const rawWithoutCrc =
+    tlv('00', '01') + // Format indicator
+    tlv('01', '12') + // 12 = Dynamic QR
+    tlv('26', merchantAccountInfo) + // Merchant Account Info
+    tlv('52', '0000') + // Merchant Category Code
+    tlv('53', '360') + // Currency: IDR (360)
+    tlv('54', String(amount)) + // Amount
+    tlv('58', 'ID') + // Country code
+    tlv('59', 'LaporMagang') + // Merchant name
+    tlv('60', 'Jakarta') + // City
+    tlv('62', additionalData) + // Additional data (Ref/Order ID)
+    '6304'; // CRC Tag + Length
+
+  const crc = calculateEmvcoCrc16(rawWithoutCrc);
+  return `${rawWithoutCrc}${crc}`;
+}
+
 export interface CreateQrisTransactionParams {
   orderId: string;
   packageDetails: PackageDetails;
@@ -110,7 +162,7 @@ export interface QrisTransactionResult {
   qrImageUrl: string;
   expiresAt: string;
   isMock: boolean;
-  midtransError?: string;
+  gatewayMessage?: string;
 }
 
 /**
@@ -126,6 +178,8 @@ export async function createMidtransQrisCharge(
   // Waktu kedaluwarsa QRIS: 15 menit dari sekarang
   const expireDate = new Date(Date.now() + 15 * 60 * 1000);
   const expiresAt = expireDate.toISOString();
+
+  let midtransErrorNotice: string | undefined;
 
   if (serverKey && !serverKey.startsWith('mock_') && serverKey !== 'test_server_key') {
     const chargeUrl = getMidtransBaseUrl('charge');
@@ -167,7 +221,6 @@ export async function createMidtransQrisCharge(
         const data = await response.json();
         const qrString = data.qr_string || '';
 
-        // Gambar QR Code yang 100% bisa dibuka di browser publik tanpa auth header
         const reliableQrImageUrl = qrString
           ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=${encodeURIComponent(
               qrString
@@ -181,28 +234,32 @@ export async function createMidtransQrisCharge(
           qrImageUrl: reliableQrImageUrl,
           expiresAt: data.expiry_time || expiresAt,
           isMock: false,
+          gatewayMessage: 'Midtrans Sandbox QRIS Aktif',
         };
       } else {
         const errText = await response.text();
         console.error('Midtrans Core API charge error:', errText);
+        midtransErrorNotice = `Midtrans HTTP ${response.status}: ${errText.slice(0, 150)}`;
       }
     } catch (fetchErr) {
       console.error('Midtrans fetch network error:', fetchErr);
+      midtransErrorNotice = 'Gagal menghubungi server Midtrans';
     }
   }
 
-  // Mock / Simulasi saat kredensial Sandbox belum terkonfigurasi di Vercel
-  const mockQrString = `00020101021226670014ID.LINKAJA.WWW01189360091100216091010215${orderId}520458125303360540${packageDetails.price}.005802ID5911LaporMagang6007Jakarta62170113${orderId}6304ABCD`;
-  const mockQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=${encodeURIComponent(
-    mockQrString
+  // Gunakan generator EMVCo QRIS valid dengan CRC16 CCITT asli
+  const validQrString = buildValidEmvcoQrisString(orderId, packageDetails.price);
+  const reliableQrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&data=${encodeURIComponent(
+    validQrString
   )}`;
 
   return {
     orderId,
     grossAmount: packageDetails.price,
-    qrString: mockQrString,
-    qrImageUrl: mockQrImageUrl,
+    qrString: validQrString,
+    qrImageUrl: reliableQrImageUrl,
     expiresAt,
     isMock: true,
+    gatewayMessage: midtransErrorNotice,
   };
 }

@@ -44,6 +44,7 @@ interface ActivePaymentOrder {
   expiresAt: string;
   status: 'pending' | 'settlement' | 'expired' | 'failed';
   isMock?: boolean;
+  gatewayMessage?: string;
 }
 
 export default function ProfilPage() {
@@ -323,6 +324,7 @@ export default function ProfilPage() {
           expiresAt: data.order.expiresAt,
           status: 'pending',
           isMock: data.order.isMock,
+          gatewayMessage: data.order.gatewayMessage,
         });
       } else {
         showDialog({
@@ -542,6 +544,11 @@ export default function ProfilPage() {
                     <span>Buka Midtrans QRIS Simulator</span>
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
+                  {paymentOrder.gatewayMessage && (
+                    <div className="text-[10px] text-amber-400 bg-amber-950/40 border border-amber-500/20 rounded-lg p-2 font-mono">
+                      Info Gateway: {paymentOrder.gatewayMessage}
+                    </div>
+                  )}
                 </div>
               )}
 

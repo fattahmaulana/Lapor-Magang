@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
         qrImageUrl: qrisCharge.qrImageUrl,
         expiresAt: qrisCharge.expiresAt,
         isMock: qrisCharge.isMock,
+        gatewayMessage: qrisCharge.gatewayMessage,
       },
     });
   } catch (error) {
