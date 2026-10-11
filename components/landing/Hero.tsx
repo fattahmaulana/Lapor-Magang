@@ -33,14 +33,14 @@ export function Hero() {
           <div className="space-y-1">
             <LetterRevealHeading
               as="h1"
-              text="Laporan Magang."
+              text="Pelaporan Magang,"
               className="text-4xl sm:text-6xl md:text-7xl block leading-[1.05]"
               delay={0.08}
               stagger={0.02}
             />
             <LetterRevealHeading
               as="span"
-              text="Rapi Sebelum 23.59."
+              text="Lebih Efisien."
               className="text-4xl sm:text-6xl md:text-7xl block leading-[1.05] text-cyan-400 drop-shadow-[0_0_20px_rgba(34,211,238,0.2)]"
               delay={0.35}
               stagger={0.02}
@@ -53,7 +53,7 @@ export function Hero() {
             transition={{ duration: 0.6, delay: 0.55, ease: [0.16, 1, 0.3, 1] }}
             className="mx-auto mt-6 max-w-xl text-sm leading-relaxed text-zinc-400 sm:text-base"
           >
-            Tulis catatan singkat kegiatan sore hari. Sistem otomatis menyusun draf 3 kolom standar resmi Maganghub dalam hitungan detik.
+            Dokumentasikan progres harian dan susun laporan sesuai format resmi Maganghub tanpa proses yang berbelit.
           </motion.p>
 
           {/* Action Buttons (Clean, without tacky icons) */}
