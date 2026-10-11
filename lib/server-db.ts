@@ -516,6 +516,7 @@ export const serverDb = {
     qris_url?: string;
     snap_token?: string;
     snap_redirect_url?: string;
+    note?: string;
   }): Promise<PaymentRecord> {
     const payment: PaymentRecord = {
       id: crypto.randomUUID(),
@@ -529,6 +530,7 @@ export const serverDb = {
       qris_url: data.qris_url,
       snap_token: data.snap_token,
       snap_redirect_url: data.snap_redirect_url,
+      note: data.note,
       created_at: new Date().toISOString(),
     };
 
