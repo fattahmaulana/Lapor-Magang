@@ -60,23 +60,109 @@ export interface GenerateReportOptions {
   tone?: 'standar' | 'formal' | 'santai';
 }
 
+/**
+ * Pembersih artefak teks: membuang karakter aneh, markdown sisa, emoji,
+ * format list/bullet, kurung mentah, serta menormalkan spasi dan tanda baca.
+ */
+function cleanReportText(text: string): string {
+  if (!text) return '';
+
+  let cleaned = text
+    // Hapus blok kode / backtick
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`+/g, '')
+    // Hapus tag HTML / XML
+    .replace(/<\/?[^>]+(>|$)/g, ' ')
+    // Hapus bullet points, numbering list, dash, asterisk di awal kalimat
+    .replace(/^[\s*\-•–—#\d.]+/, '')
+    .replace(/[\n\r]+/g, ' ')
+    // Hapus simbol markdown tebal/miring
+    .replace(/[*_~]+/g, '')
+    // Hapus emoji dan simbol non-standar (pertahankan huruf, angka, tanda baca umum bahasa Indonesia)
+    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+    // Hapus karakter placeholder / artefak mentah
+    .replace(/[\[\]{}<>\\|~^]/g, '')
+    // Rapikan tanda baca ganda (contoh: .. -> . , ,, -> , !? -> .)
+    .replace(/\.{2,}/g, '.')
+    .replace(/,{2,}/g, ',')
+    .replace(/[!?]+/g, '.')
+    // Rapikan spasi berlebih
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Pastikan huruf pertama kapital
+  if (cleaned.length > 0) {
+    cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+
+  // Pastikan diakhiri titik tunggal
+  if (cleaned.length > 0 && !/[.!?]$/.test(cleaned)) {
+    cleaned += '.';
+  }
+
+  return cleaned;
+}
+
+/**
+ * Menjamin panjang teks berada dalam rentang aman Maganghub (140 - 380 karakter)
+ * tanpa kalimat terpotong di tengah jalan.
+ */
+function normalizeToMaganghubRange(text: string, defaultSentence: string): string {
+  let cleaned = cleanReportText(text);
+
+  // Jika terlalu pendek (< 120), tambahkan kalimat pelengkap formal
+  if (cleaned.length < 120) {
+    const supplementClean = cleanReportText(defaultSentence);
+    cleaned = `${cleaned} ${supplementClean}`.trim();
+  }
+
+  // Jika masih di bawah batas minimal 120
+  if (cleaned.length < 120) {
+    cleaned = `${cleaned} Kegiatan dilaksanakan sesuai arahan pembimbing lapangan dan SOP instansi.`.trim();
+  }
+
+  // Jika melebihi batas maksimal 400, potong secara rapi per batas kalimat (titik)
+  if (cleaned.length > 390) {
+    const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [];
+    let reconstructed = '';
+    for (const s of sentences) {
+      if ((reconstructed + s).length <= 385) {
+        reconstructed += s;
+      } else {
+        break;
+      }
+    }
+
+    if (reconstructed.length >= 120) {
+      cleaned = reconstructed.trim();
+    } else {
+      // Potong tepat pada batas kata terakhir sebelum 385 karakter
+      const truncated = cleaned.slice(0, 380);
+      const lastSpace = truncated.lastIndexOf(' ');
+      cleaned = (lastSpace > 100 ? truncated.slice(0, lastSpace) : truncated).trim() + '.';
+    }
+  }
+
+  return cleanReportText(cleaned);
+}
+
 async function generateWithRetry(ai: GoogleGenAI, params: any) {
   let lastErr;
-  for (let i = 0; i < 2; i++) {
+  // Menggunakan model Gemini Flash default resmi dari SDK @google/genai
+  const candidateModels = ['gemini-2.5-flash'];
+
+  for (const modelName of candidateModels) {
     try {
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('AI Request timeout')), 7000)
+        setTimeout(() => reject(new Error('AI Request timeout')), 8000)
       );
       const callPromise = ai.models.generateContent({
         ...params,
-        model: 'gemini-2.5-flash',
+        model: modelName,
       });
       return (await Promise.race([callPromise, timeoutPromise])) as any;
     } catch (err: any) {
       lastErr = err;
-      if (i < 1) {
-        await new Promise((r) => setTimeout(r, 600));
-      }
     }
   }
   throw lastErr;
@@ -84,56 +170,69 @@ async function generateWithRetry(ai: GoogleGenAI, params: any) {
 
 /**
  * Abstraksi AI Engine Adapter
- * Memenuhi kebutuhan penulisan manusiawi (natural, tidak kaku seperti robot/AI slop)
+ * Menghasilkan narasi logbook 3 kolom resmi, profesional, terstruktur,
+ * bersih dari tanda baca aneh/emoji, dan siap dipertanggungjawabkan ke pembimbing Maganghub.
  */
 export async function generateReport(
   options: GenerateReportOptions
 ): Promise<GenerateReportResponse> {
-  const { notes, tone = 'standar' } = options;
+  const { notes, tone = 'formal' } = options;
 
   const sanitizedNotes = notes.trim().slice(0, 4000);
 
-  if (sanitizedNotes.length < 80) {
+  if (sanitizedNotes.length < 50) {
     return {
       status: 'needs_more_info',
       question:
-        'Bisa ceritakan sedikit lebih rinci apa saja yang kamu kerjakan hari ini, hal baru yang kamu pelajari, atau kendala kecil yang muncul saat magang?',
+        'Mohon uraikan sedikit lebih rinci aktivitas atau tugas magang yang Anda laksanakan hari ini (misalnya modul/dokumen yang dikerjakan, koordinasi tim, atau kendala lapangan).',
       reason:
-        'Catatan kerja masih di bawah 80 karakter, belum memuat rincian aktivitas yang cukup untuk memenuhi batas 100 karakter Maganghub.',
+        'Catatan terlalu singkat untuk dapat disusun menjadi 3 kolom laporan resmi Maganghub yang memenuhi standar evaluasi.',
     };
   }
 
   const apiKey = await getActiveApiKey();
   if (!apiKey) {
-    return generateHumanizedFallback(sanitizedNotes);
+    return generateProfessionalFallback(sanitizedNotes);
   }
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const systemInstruction = `Kamu adalah rekan magang berpengalaman yang membantu peserta Pemagangan Nasional (Maganghub, Kemnaker) merapikan draf laporan harian mereka.
+  const systemInstruction = `Anda adalah asisten penyusun laporan profesional untuk program Pemagangan Nasional (Maganghub Kemnaker RI).
+Tugas Anda: Mengubah catatan kerja mentah dari peserta magang menjadi 3 kolom laporan harian resmi berkualitas tinggi, kredibel, baku, dan sesuai kaidah tata bahasa Indonesia yang baik dan benar (PUEBI).
 
-PANDUAN GAYA BAHASA MANUSIAWI (PENTING):
-1. TULIS SECARA NATURAL DAN WAJAR layaknya mahasiswa/peserta magang yang menulis logbook harian mereka sendiri.
-2. DILARANG KERAS menggunakan kata-kata robotik / klise AI birokratis seperti:
-   - JANGAN PAKAI: "Melaksanakan serangkaian agenda komprehensif...", "Sebagai manifestasi pembelajaran...", "Guna mengoptimalkan sinergitas...", "Mewujudkan efektivitas holistik..."
-   - GUNAKAN GAYA MANUSIAWI: "Hari ini saya fokus menyelesaikan...", "Saya membantu tim dalam...", "Dari kegiatan ini saya jadi lebih paham cara...", "Sempat ada sedikit kendala pada..., namun sudah berhasil diselesaikan dengan..."
-3. HANYA GUNAKAN FAKTA yang benar-benar ada dalam catatan pengguna. Jangan mengarang nama proyek, teknologi, atau tugas fiktif yang tidak pernah disebut.
-4. Setiap kolom WAJIB memiliki panjang antara 130 sampai 360 karakter (aturan sistem Maganghub minimal 100 karakter).
-5. Format output WAJIB JSON murni tanpa markdown:
-   Jika catatan memuat kegiatan nyata:
-   {"status": "success", "activity_desc": "...", "learning_desc": "...", "obstacle_desc": "..."}
-   Jika catatan terlalu ambigu:
-   {"status": "needs_more_info", "question": "satu pertanyaan lanjutan yang ramah", "reason": "alasan singkat"}
-`;
+STANDAR PENULISAN 3 KOLOM LAPORAN:
+1. Kolom 1 (activity_desc / Uraian Aktivitas):
+   - Jelaskan apa yang dikerjakan hari ini dengan kalimat efektif dan kata kerja aktif profesional (misal: "Melakukan verifikasi berkas...", "Menyusun rekapitulasi data...", "Mengimplementasikan perbaikan bug pada...").
+   - Cantumkan konteks tugas secara konkret berdasarkan catatan peserta.
 
-  const promptContent = `Berikut adalah catatan kerja harian dari peserta magang:
+2. Kolom 2 (learning_desc / Pelajaran yang Diperoleh):
+   - Jelaskan wawasan teknis, pemahaman alur kerja/SOP, keterampilan baru, atau nilai profesionalitas kerja yang diperoleh dari tugas tersebut.
+   - Hindari bahasa klise berlebihan; fokus pada kompetensi riil yang bertambah.
 
+3. Kolom 3 (obstacle_desc / Kendala yang Dialami):
+   - Tuliskan tantangan teknis/operasional nyata yang dihadapi DAN solusi konkret atau tindak lanjut penyelesaiannya secara profesional.
+   - Jika peserta tidak menyebutkan kendala spesifik dalam catatan, formulasikan dinamika penyesuaian kerja yang wajar (misalnya sinkronisasi data, koordinasi instruksi, atau ketelitian proses) beserta solusi efektifnya.
+
+ATURAN FORMAT KERAS (ANTI-RUSAK & ANTI-TANDA ANEH):
+- DILARANG menggunakan tanda aneh, markdown (**tebal**, *miring*, \`kode\`), kurung siku, kurung kurawal, simbol bullet (- / * / •), atau emoji apa pun.
+- DILARANG menggunakan kata-kata percakapan kasual ("tadi pagi", "sempet", "benerin", "cocokin", "udah"). Ubah ke kosakata baku ("tadi pagi" -> "pada sesi pagi", "benerin" -> "memperbaiki", "cocokin" -> "melakukan rekonsiliasi/pencocokan").
+- Setiap kolom HARUS terdiri dari 2 sampai 3 kalimat utuh, mengalir, rapi, dan diakhiri tanda titik.
+- Panjang karakter untuk MASING-MASING kolom WAJIB berada di antara 140 sampai 360 karakter (aturan sistem Maganghub minimal 100 karakter).
+- Output HANYA boleh berupa objek JSON murni tanpa pembuka/penutup markdown.`;
+
+  const promptContent = `Berikut catatan kerja harian peserta magang:
 <user_notes>
 ${sanitizedNotes.replace(/<\/user_notes>/g, '')}
 </user_notes>
 
-Gaya penulisan: ${tone} (bahasa Indonesia manusiawi, wajar, tidak kaku, tanpa klise robotik).
-Susun draf 3 kolom (activity_desc, learning_desc, obstacle_desc). Pastikan masing-masing kolom panjangnya 130-360 karakter. Kembalikan JSON murni.`;
+Gaya penulisan: ${tone === 'santai' ? 'semi-formal wajar' : 'formal profesional baku'}.
+Hasilkan JSON murni sesuai format:
+{
+  "status": "success",
+  "activity_desc": "Uraian kegiatan 140-360 karakter...",
+  "learning_desc": "Pelajaran 140-360 karakter...",
+  "obstacle_desc": "Kendala dan solusi 140-360 karakter..."
+}`;
 
   let attempts = 0;
   const maxAttempts = 2;
@@ -147,7 +246,7 @@ Susun draf 3 kolom (activity_desc, learning_desc, obstacle_desc). Pastikan masin
         ],
         config: {
           responseMimeType: 'application/json',
-          temperature: 0.3,
+          temperature: 0.2,
         },
       });
 
@@ -158,15 +257,29 @@ Susun draf 3 kolom (activity_desc, learning_desc, obstacle_desc). Pastikan masin
       if (validated.status === 'needs_more_info') {
         return {
           status: 'needs_more_info',
-          question: validated.question,
-          reason: validated.reason,
+          question: cleanReportText(validated.question),
+          reason: cleanReportText(validated.reason),
         };
       }
 
+      // Bersihkan dan normalkan masing-masing kolom ke standar Maganghub
+      const cleanedActivity = normalizeToMaganghubRange(
+        validated.activity_desc,
+        'Seluruh tahapan kerja diselesaikan dengan tertib sesuai instruksi dan target harian pembimbing lapangan.'
+      );
+      const cleanedLearning = normalizeToMaganghubRange(
+        validated.learning_desc,
+        'Aktivitas ini memperdalam pemahaman mengenai alur operasional instansi serta meningkatkan ketelitian dalam penyelesaian tugas.'
+      );
+      const cleanedObstacle = normalizeToMaganghubRange(
+        validated.obstacle_desc,
+        'Proses kerja memerlukan penyesuaian teknis awal, namun berhasil diatasi secara optimal melalui koordinasi langsung bersama tim.'
+      );
+
       const draftValidation = reportDraftSchema.safeParse({
-        activity_desc: validated.activity_desc.trim(),
-        learning_desc: validated.learning_desc.trim(),
-        obstacle_desc: validated.obstacle_desc.trim(),
+        activity_desc: cleanedActivity,
+        learning_desc: cleanedLearning,
+        obstacle_desc: cleanedObstacle,
       });
 
       if (draftValidation.success) {
@@ -177,56 +290,48 @@ Susun draf 3 kolom (activity_desc, learning_desc, obstacle_desc). Pastikan masin
       }
 
       if (attempts > maxAttempts) {
-        return {
-          status: 'success',
-          data: {
-            activity_desc: ensureLength(
-              validated.activity_desc,
-              'Semua proses diselesaikan dengan tertib sesuai arahan kerja dari pembimbing lapangan hari ini.'
-            ),
-            learning_desc: ensureLength(
-              validated.learning_desc,
-              'Hal ini membuat saya lebih memahami alur kerja nyata dan pentingnya komunikasi yang jelas saat magang.'
-            ),
-            obstacle_desc: ensureLength(
-              validated.obstacle_desc,
-              'Awalnya butuh sedikit penyesuaian teknis, namun langsung bisa diatasi dengan baik tanpa kendala besar.'
-            ),
-          },
-        };
+        return generateProfessionalFallback(sanitizedNotes);
       }
     } catch {
       if (attempts > maxAttempts) {
-        return generateHumanizedFallback(sanitizedNotes);
+        return generateProfessionalFallback(sanitizedNotes);
       }
     }
   }
 
-  return generateHumanizedFallback(sanitizedNotes);
+  return generateProfessionalFallback(sanitizedNotes);
 }
 
-function ensureLength(text: string, supplement: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length >= 120 && trimmed.length <= 400) return trimmed;
-  if (trimmed.length < 120) {
-    return `${trimmed} ${supplement}`.slice(0, 390);
-  }
-  return trimmed.slice(0, 390);
-}
+/**
+ * Generator draf cadangan berkualitas tinggi dan formal jika AI offline / kuota habis.
+ * Mengubah catatan mentah menjadi bahasa formal Indonesia baku tanpa tanda aneh.
+ */
+function generateProfessionalFallback(rawNotes: string): GenerateReportResponse {
+  const clean = cleanReportText(rawNotes)
+    .replace(/^Catatan\s*:\s*/i, '')
+    .slice(0, 180);
 
-function generateHumanizedFallback(rawNotes: string): GenerateReportResponse {
-  const clean = rawNotes.replace(/\s+/g, ' ').trim();
+  const act = normalizeToMaganghubRange(
+    `Melaksanakan penugasan kerja harian terkait ${clean}. Seluruh rangkaian kegiatan dikoordinasikan secara aktif dengan tim dan diselesaikan sesuai standar operasional prosedur yang berlaku di lingkungan instansi.`,
+    'Seluruh aktivitas diselesaikan dengan baik sesuai target pembimbing.'
+  );
 
-  const act = `Hari ini saya fokus mengerjakan tugas magang terkait: ${clean}. Saya mengikuti instruksi dari pembimbing lapangan dan memastikan seluruh tahapan kerja selesai dengan baik sesuai jadwal yang ditentukan.`;
-  const learn = `Dari tugas hari ini (${clean.slice(0, 70)}...), saya belajar langsung tentang cara kerja praktis di tempat magang serta melatih ketelitian agar tidak terjadi kesalahan pada proses berikutnya.`;
-  const obs = `Proses kerja berjalan cukup lancar. Tadi sempat ada sedikit penyesuaian waktu pada saat pengerjaan, namun semuanya bisa diselesaikan dengan baik tanpa hambatan yang berarti.`;
+  const learn = normalizeToMaganghubRange(
+    `Memperoleh pemahaman praktis yang lebih mendalam mengenai alur kerja ${clean}. Kegiatan ini turut mengasah kemampuan problem solving, ketelitian administratif, dan kedisiplinan kerja dalam lingkungan profesional.`,
+    'Hal ini memperkaya wawasan kerja lapangan peserta magang.'
+  );
+
+  const obs = normalizeToMaganghubRange(
+    `Sempat terdapat kebutuhan penyesuaian teknis dan koordinasi detail pada proses ${clean}. Kendala tersebut berhasil diselesaikan secara efektif melalui konfirmasi dan bimbingan langsung dari pembimbing lapangan.`,
+    'Tantangan tersebut dapat diatasi secara cepat tanpa mengganggu target kerja.'
+  );
 
   return {
     status: 'success',
     data: {
-      activity_desc: act.slice(0, 380),
-      learning_desc: learn.slice(0, 380),
-      obstacle_desc: obs.slice(0, 380),
+      activity_desc: act,
+      learning_desc: learn,
+      obstacle_desc: obs,
     },
   };
 }
@@ -297,43 +402,55 @@ Format output JSON murni:
   "summary": "1 paragraf rangkuman komprehensif 2-3 kalimat yang natural",
   "key_achievements": ["pencapaian 1", "pencapaian 2", "pencapaian 3"],
   "key_learnings": ["pelajaran 1", "pelajaran 2", "pelajaran 3"],
-  "obstacles_and_solutions": ["kendala & solusinya 1", "kendala & solusinya 2"],
-  "next_week_plan": ["rencana minggu depan 1", "rencana minggu depan 2"]
+  "obstacles_and_solutions": ["kendala dan solusi yang telah diselesaikan"],
+  "next_week_plan": ["rencana target minggu berikutnya"]
 }`;
 
     const res = await generateWithRetry(ai, {
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.3,
-      },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { responseMimeType: 'application/json', temperature: 0.3 },
     });
 
     const parsed = JSON.parse(res.text || '{}');
     return {
       week_label: weekLabel,
-      period: `${safeLogs[safeLogs.length - 1]?.date || 'Awal'} s.d. ${safeLogs[0]?.date || 'Akhir'}`,
+      period: defaultRecap.period,
       total_days: safeLogs.length,
-      summary: parsed.summary || defaultRecap.summary,
-      key_achievements: Array.isArray(parsed.key_achievements) && parsed.key_achievements.length > 0 ? parsed.key_achievements : defaultRecap.key_achievements,
-      key_learnings: Array.isArray(parsed.key_learnings) && parsed.key_learnings.length > 0 ? parsed.key_learnings : defaultRecap.key_learnings,
-      obstacles_and_solutions: Array.isArray(parsed.obstacles_and_solutions) && parsed.obstacles_and_solutions.length > 0 ? parsed.obstacles_and_solutions : defaultRecap.obstacles_and_solutions,
-      next_week_plan: Array.isArray(parsed.next_week_plan) && parsed.next_week_plan.length > 0 ? parsed.next_week_plan : defaultRecap.next_week_plan,
+      summary: cleanReportText(parsed.summary || defaultRecap.summary),
+      key_achievements: Array.isArray(parsed.key_achievements) && parsed.key_achievements.length > 0
+        ? parsed.key_achievements.map((item: string) => cleanReportText(item))
+        : defaultRecap.key_achievements,
+      key_learnings: Array.isArray(parsed.key_learnings) && parsed.key_learnings.length > 0
+        ? parsed.key_learnings.map((item: string) => cleanReportText(item))
+        : defaultRecap.key_learnings,
+      obstacles_and_solutions:
+        Array.isArray(parsed.obstacles_and_solutions) && parsed.obstacles_and_solutions.length > 0
+          ? parsed.obstacles_and_solutions.map((item: string) => cleanReportText(item))
+          : defaultRecap.obstacles_and_solutions,
+      next_week_plan: Array.isArray(parsed.next_week_plan) && parsed.next_week_plan.length > 0
+        ? parsed.next_week_plan.map((item: string) => cleanReportText(item))
+        : defaultRecap.next_week_plan,
     };
   } catch {
     return defaultRecap;
   }
 }
 
-/**
- * Mengelompokkan logbook berdasarkan minggu (Minggu ke-1, Minggu ke-2, Minggu ke-3, dst.)
- */
-export function groupLogsByWeeks(logs: { date: string; activity_desc: string; learning_desc: string; obstacle_desc: string }[]) {
-  const sorted = [...logs].sort((a, b) => a.date.localeCompare(b.date));
-  if (sorted.length === 0) return [];
+function groupLogsByWeeks(logs: DailyLogItem[]): Array<{
+  weekNum: number;
+  startDate: string;
+  endDate: string;
+  logs: DailyLogItem[];
+}> {
+  if (logs.length === 0) return [];
 
+  const sorted = [...logs].sort((a, b) => a.date.localeCompare(b.date));
   const firstDate = new Date(sorted[0].date);
-  const weeksMap: Map<number, { weekNum: number; startDate: string; endDate: string; logs: typeof logs }> = new Map();
+
+  const weeksMap = new Map<
+    number,
+    { weekNum: number; startDate: string; endDate: string; logs: DailyLogItem[] }
+  >();
 
   sorted.forEach((l) => {
     const lDate = new Date(l.date);
@@ -361,7 +478,6 @@ export function groupLogsByWeeks(logs: { date: string; activity_desc: string; le
 
 /**
  * Generator PPT / Slide Presentasi Otomatis berbasis AI (Paket Pro)
- * Menampilkan kegiatan per minggu (Minggu ke-1, Minggu ke-2, dst.) secara lengkap tanpa terpotong
  */
 export async function generatePresentationDeck(
   logs: DailyLogItem[],
@@ -398,206 +514,192 @@ export async function generatePresentationDeck(
       ],
       speaker_notes: 'Selamat pagi bapak/ibu pembimbing dan penguji, berikut adalah paparan perkembangan dan evaluasi kegiatan magang saya selama periode berjalan.',
     },
+    {
+      id: 2,
+      title: groupedWeeks[0]
+        ? `Aktivitas Kerja (Minggu ke-${groupedWeeks[0].weekNum})`
+        : 'Uraian Aktivitas Utama (Minggu ke-1)',
+      subtitle: groupedWeeks[0]
+        ? `Rentang Periode: ${groupedWeeks[0].startDate} s.d. ${groupedWeeks[0].endDate}`
+        : 'Penyelesaian Tugas & Tanggung Jawab Harian',
+      tag: 'Pelaksanaan Tugas',
+      bullets: groupedWeeks[0]
+        ? groupedWeeks[0].logs.slice(0, 4).map((l) => `${l.date}: ${cleanReportText(l.activity_desc)}`)
+        : [
+            'Menyelesaikan tugas operasional sesuai arahan pembimbing lapangan',
+            'Berkoordinasi aktif dengan divisi kerja terkait pemenuhan target harian',
+            'Mendokumentasikan alur pelaksanaan pekerjaan dan hasil kerja secara sistematis',
+          ],
+      speaker_notes: 'Pada bagian ini dipaparkan rincian pekerjaan dan tugas yang telah diselesaikan pada minggu bersangkutan secara faktual.',
+    },
+    {
+      id: 3,
+      title: groupedWeeks[1]
+        ? `Aktivitas Kerja (Minggu ke-${groupedWeeks[1].weekNum})`
+        : groupedWeeks[0] && groupedWeeks[0].logs.length > 4
+        ? `Lanjutan Aktivitas (Minggu ke-${groupedWeeks[0].weekNum})`
+        : 'Pencapaian & Progres Kerja',
+      subtitle: groupedWeeks[1]
+        ? `Rentang Periode: ${groupedWeeks[1].startDate} s.d. ${groupedWeeks[1].endDate}`
+        : 'Hasil Kerja & Kontribusi Nyata',
+      tag: 'Hasil Kegiatan',
+      bullets: groupedWeeks[1]
+        ? groupedWeeks[1].logs.slice(0, 4).map((l) => `${l.date}: ${cleanReportText(l.activity_desc)}`)
+        : [
+            'Penyelesaian target proyek magang sesuai timeline instansi',
+            'Peningkatan ketepatan waktu dalam pelaporan harian',
+            'Optimalisasi koordinasi dengan rekan magang dan pembimbing',
+          ],
+      speaker_notes: 'Berikut adalah kelanjutan progres aktivitas serta kontribusi yang dicapai pada periode pemagangan.',
+    },
+    {
+      id: 4,
+      title: 'Pembelajaran & Keterampilan Baru',
+      subtitle: 'Kompetensi Teknis dan Soft Skills yang Diperoleh',
+      tag: 'Capaian Pembelajaran',
+      bullets: safeLogs.length > 0
+        ? Array.from(new Set(safeLogs.map((l) => cleanReportText(l.learning_desc)))).slice(0, 4)
+        : [
+            'Memahami alur koordinasi dan birokrasi profesional di lingkungan kerja',
+            'Meningkatkan keterampilan teknis sesuai bidang penempatan magang',
+            'Melatih pemecahan masalah (problem solving) secara mandiri dan tim',
+          ],
+      speaker_notes: 'Selama melaksanakan penugasan, terdapat berbagai kompetensi teknis dan nilai profesionalitas baru yang saya pelajari.',
+    },
+    {
+      id: 5,
+      title: 'Evaluasi Kendala & Rencana Tindak Lanjut',
+      subtitle: 'Solusi Terapan dan Target Periode Berikutnya',
+      tag: 'Evaluasi & Solusi',
+      bullets: [
+        safeLogs[0] ? `Solusi kendala: ${cleanReportText(safeLogs[0].obstacle_desc)}` : 'Mengatasi kendala teknis melalui koordinasi berkala dengan pembimbing',
+        'Memperkuat konsistensi pelaporan harian sebelum batas waktu 23.59',
+        'Mempersiapkan penyusunan laporan akhir pemagangan secara berkala',
+      ],
+      speaker_notes: 'Sebagai penutup, setiap kendala telah dievaluasi solusinya dan rencana kerja telah disiapkan untuk memastikan seluruh target pemagangan tercapai dengan baik.',
+    },
   ];
 
-  let slideId = 2;
-
-  // Buat slide khusus untuk SETIAP minggu kegiatan (Minggu 1, Minggu 2, Minggu 3, dst.)
-  if (groupedWeeks.length > 0) {
-    groupedWeeks.forEach((w) => {
-      const weekBullets = w.logs.map((l) => `${l.date}: ${l.activity_desc}`);
-      defaultSlides.push({
-        id: slideId++,
-        title: `Kegiatan Minggu ke-${w.weekNum}`,
-        subtitle: `Periode ${w.startDate} s.d. ${w.endDate} (${w.logs.length} hari kegiatan)`,
-        tag: `Minggu ${w.weekNum}`,
-        bullets: weekBullets,
-        speaker_notes: `Pada minggu ke-${w.weekNum}, fokus pekerjaan berpusat pada penugasan operasional dan pendalaman materi di unit kerja.`,
-      });
-    });
-  } else {
-    defaultSlides.push({
-      id: slideId++,
-      title: 'Aktivitas Kerja Magang',
-      subtitle: 'Fokus & Ruang Lingkup Penugasan',
-      tag: 'Aktivitas',
-      bullets: ['Belum ada riwayat aktivitas yang tercatat.'],
-      speaker_notes: 'Ringkasan aktivitas magang.',
-    });
-  }
-
-  // Slide Pencapaian & Keterampilan Baru (kalimat utuh tanpa terpotong)
-  const uniqueLearnings = Array.from(
-    new Set(safeLogs.map((l) => l.learning_desc).filter(Boolean))
-  ).slice(0, 4);
-
-  defaultSlides.push({
-    id: slideId++,
-    title: 'Pencapaian & Keterampilan Baru',
-    subtitle: 'Kompetensi Teknis & Pemahaman yang Diperoleh',
-    tag: 'Hasil Belajar',
-    bullets:
-      uniqueLearnings.length > 0
-        ? uniqueLearnings
-        : [
-            'Memahami standar operasional prosedur instansi tempat magang.',
-            'Meningkatkan keterampilan komunikasi kerja dan pemecahan masalah langsung.',
-            'Melatih disiplin pelaporan harian sebelum batas waktu resmi.',
-          ],
-    speaker_notes: 'Berbagai keterampilan teknis dan soft skill yang berhasil saya pelajari secara langsung di lapangan.',
-  });
-
-  // Slide Kendala & Solusi Lapangan (kalimat utuh tanpa terpotong)
-  const uniqueObstacles = Array.from(
-    new Set(safeLogs.map((l) => l.obstacle_desc).filter(Boolean))
-  ).slice(0, 4);
-
-  defaultSlides.push({
-    id: slideId++,
-    title: 'Evaluasi Kendala & Solusi Lapangan',
-    subtitle: 'Tantangan Operasional & Langkah Penyelesaian Masalah',
-    tag: 'Evaluasi Kendala',
-    bullets:
-      uniqueObstacles.length > 0
-        ? uniqueObstacles
-        : ['Kendala teknis awal diselesaikan melalui bimbingan aktif bersama mentor dan tim kerja.'],
-    speaker_notes: 'Tantangan yang muncul saat bekerja dan bagaimana saya bersama pembimbing mencari jalan keluar.',
-  });
-
-  // Slide Rencana Kerja & Tindak Lanjut
-  defaultSlides.push({
-    id: slideId++,
-    title: 'Rencana Kerja & Tindak Lanjut',
-    subtitle: 'Target Pencapaian & Prioritas Periode Mendatang',
-    tag: 'Rencana Kerja',
-    bullets: [
-      'Menyelesaikan penugasan divisi yang sedang berjalan sesuai target mutu instansi.',
-      'Memperdalam penguasaan perangkat kerja dan sistem informasi yang digunakan mitra.',
-      'Mendiskusikan evaluasi berkala dan menerima bimbingan lanjutan dari mentor industri.',
-      'Memastikan seluruh laporan harian Maganghub tetap terisi tepat waktu sebelum 23.59 WIB.',
-    ],
-    speaker_notes: 'Berikut rencana prioritas kerja yang akan saya eksekusi pada periode penugasan selanjutnya.',
-  });
-
-  const defaultDeck: PresentationDeck = {
-    title: 'Laporan Perkembangan Pemagangan',
-    subtitle: `Evaluasi Progres Magang & Pencapaian Kerja (${startDate} s.d. ${endDate})`,
-    author: meta.author || 'Peserta Pemagangan Nasional',
-    period: `${startDate} s.d. ${endDate}`,
-    institution: meta.institution || 'Maganghub Kemnaker',
-    slides: defaultSlides,
-  };
-
   if (!apiKey || safeLogs.length === 0) {
-    return defaultDeck;
+    return {
+      title: 'Laporan Perkembangan Pemagangan',
+      subtitle: meta.weekTitle || `Evaluasi Progres Magang (${startDate} – ${endDate})`,
+      author: meta.author,
+      period: `${startDate} s.d. ${endDate}`,
+      institution: meta.institution || 'Maganghub Kemnaker',
+      slides: defaultSlides,
+    };
   }
 
   const ai = new GoogleGenAI({ apiKey });
-  const logsText = groupedWeeks
+  const weeklyStructureInfo = groupedWeeks
     .map(
       (w) =>
-        `[Minggu ke-${w.weekNum} (${w.startDate} s.d. ${w.endDate})]:\n` +
-        w.logs
-          .map((l) => `- Tanggal ${l.date}: Aktivitas: ${l.activity_desc} | Pelajaran: ${l.learning_desc} | Kendala: ${l.obstacle_desc}`)
-          .join('\n')
+        `Minggu ke-${w.weekNum} (${w.startDate} s.d. ${w.endDate}):\n` +
+        w.logs.map((l) => `  - [${l.date}] Aktivitas: ${cleanReportText(l.activity_desc)}`).join('\n')
     )
     .join('\n\n');
 
   try {
-    const prompt = `Kamu adalah pembuat presentasi profesional untuk program Pemagangan Nasional (Maganghub Kemnaker).
-Dari data riwayat catatan magang per minggu berikut:
-${logsText}
+    const prompt = `Buatkan deck presentasi PPT evaluasi magang 5 slide yang profesional, terstruktur, dan tidak memotong kalimat.
+Informasi Pemagangan:
+- Penulis: ${meta.author}
+- Instansi: ${meta.institution || 'Mitra Pemagangan'}
+- Periode: ${startDate} s.d. ${endDate}
 
-ATURAN STRUKTUR SLIDE:
-1. Slide 1: Cover Judul Laporan ("Laporan Perkembangan Pemagangan")
-2. Buatkan 1 slide khusus untuk SETIAP minggu kegiatan ("Kegiatan Minggu ke-1", "Kegiatan Minggu ke-2", "Kegiatan Minggu ke-3", dst.) sesuai data minggu yang tersedia. Poin-poin kegiatan harus memuat tanggal dan uraian kalimat yang LENGKAP TANPA TERPOTONG.
-3. Slide Pencapaian & Keterampilan yang Diperoleh (kalimat utuh tanpa terpotong).
-4. Slide Evaluasi Kendala Lapangan & Solusi Pemecahan Masalah (kalimat utuh tanpa terpotong).
-5. Slide Rencana Kerja & Tindak Lanjut Mendatang.
+Data Kegiatan Mingguan:
+${weeklyStructureInfo}
 
-DILARANG MEMOTONG KALIMAT di tengah jalan (dilarang menggunakan "..." atau kata gantung). Seluruh bullet point harus berupa kalimat lengkap yang rapi dan profesional.
+Pelajaran:
+${safeLogs.slice(0, 4).map((l) => `- ${cleanReportText(l.learning_desc)}`).join('\n')}
 
-Format output JSON murni:
+Format output JSON murni persis:
 {
-  "title": "Laporan Perkembangan Pemagangan",
-  "subtitle": "Evaluasi Progres Magang & Pencapaian Kerja",
   "slides": [
-    {
-      "id": 1,
-      "title": "Judul Slide",
-      "subtitle": "Keterangan",
-      "tag": "Kategori / Minggu X",
-      "bullets": ["Poin penting lengkap tanpa potongan kalimat 1", "Poin 2"],
-      "speaker_notes": "Catatan singkat apa yang harus diucapkan presenter"
-    }
+    { "id": 1, "title": "...", "subtitle": "...", "tag": "Judul", "bullets": ["...", "...", "...", "..."], "speaker_notes": "..." },
+    { "id": 2, "title": "Aktivitas Kerja (Minggu ke-1)", "subtitle": "...", "tag": "Minggu ke-1", "bullets": ["...", "...", "..."], "speaker_notes": "..." },
+    { "id": 3, "title": "Aktivitas Kerja (Minggu ke-2)", "subtitle": "...", "tag": "Minggu ke-2", "bullets": ["...", "...", "..."], "speaker_notes": "..." },
+    { "id": 4, "title": "Pembelajaran & Keterampilan Baru", "subtitle": "...", "tag": "Kompetensi", "bullets": ["...", "...", "..."], "speaker_notes": "..." },
+    { "id": 5, "title": "Evaluasi & Rencana Tindak Lanjut", "subtitle": "...", "tag": "Evaluasi", "bullets": ["...", "...", "..."], "speaker_notes": "..." }
   ]
 }`;
 
     const res = await generateWithRetry(ai, {
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        temperature: 0.3,
-      },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { responseMimeType: 'application/json', temperature: 0.2 },
     });
 
     const parsed = JSON.parse(res.text || '{}');
-    if (parsed.slides && Array.isArray(parsed.slides) && parsed.slides.length > 0) {
+    if (Array.isArray(parsed.slides) && parsed.slides.length === 5) {
       return {
-        ...defaultDeck,
-        title: parsed.title || defaultDeck.title,
-        subtitle: parsed.subtitle || defaultDeck.subtitle,
+        title: 'Laporan Perkembangan Pemagangan',
+        subtitle: meta.weekTitle || `Evaluasi Progres Magang (${startDate} – ${endDate})`,
+        author: meta.author,
+        period: `${startDate} s.d. ${endDate}`,
+        institution: meta.institution || 'Maganghub Kemnaker',
         slides: parsed.slides.map((s: any, idx: number) => ({
           id: idx + 1,
-          title: s.title || `Slide ${idx + 1}`,
-          subtitle: s.subtitle,
-          tag: s.tag || 'Progres Magang',
-          bullets: Array.isArray(s.bullets) ? s.bullets : ['Poin kegiatan magang'],
-          speaker_notes: s.speaker_notes,
+          title: cleanReportText(s.title || defaultSlides[idx].title),
+          subtitle: cleanReportText(s.subtitle || defaultSlides[idx].subtitle),
+          tag: cleanReportText(s.tag || defaultSlides[idx].tag),
+          bullets: Array.isArray(s.bullets) && s.bullets.length > 0
+            ? s.bullets.map((b: string) => cleanReportText(b))
+            : defaultSlides[idx].bullets,
+          speaker_notes: cleanReportText(s.speaker_notes || defaultSlides[idx].speaker_notes),
         })),
       };
     }
-    return defaultDeck;
   } catch {
-    return defaultDeck;
+    // fallback
   }
+
+  return {
+    title: 'Laporan Perkembangan Pemagangan',
+    subtitle: meta.weekTitle || `Evaluasi Progres Magang (${startDate} – ${endDate})`,
+    author: meta.author,
+    period: `${startDate} s.d. ${endDate}`,
+    institution: meta.institution || 'Maganghub Kemnaker',
+    slides: defaultSlides,
+  };
 }
 
 /**
- * Transkripsi Rekaman Audio Suara (Speech-to-Text Pro)
+ * Speech-to-Text Transcribe (Paket Pro)
  */
 export async function transcribeAudio(
-  audioBase64: string,
+  base64Audio: string,
   mimeType = 'audio/webm'
 ): Promise<string> {
   const apiKey = await getActiveApiKey();
   if (!apiKey) {
-    return 'Hari ini saya fokus membantu penyelesaian tugas operasional dan koordinasi kerja di unit pemagangan.';
+    return 'Hari ini saya berkoordinasi dengan tim, menyusun dokumentasi laporan kerja, dan menyelesaikan rekapitulasi data harian sesuai arahan pembimbing lapangan.';
   }
 
-  const ai = new GoogleGenAI({ apiKey });
   try {
-    const res = await generateWithRetry(ai, {
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await generateWithRetry(ai, {
       contents: [
         {
           role: 'user',
           parts: [
             {
               inlineData: {
+                data: base64Audio,
                 mimeType,
-                data: audioBase64,
               },
             },
             {
-              text: 'Dengarkan rekaman suara kegiatan magang ini dan transkripsikan ke teks bahasa Indonesia secara bersih, alami, dan akurat. Jangan tambahkan kata pengantar atau penutup, cukup teks hasil ucapannya saja.',
+              text: 'Transkripsikan rekaman audio suara peserta magang ini secara akurat ke dalam bahasa Indonesia bersih tanpa tanda aneh, tanpa filler (eee, umm), huruf kapital benar, dan tanda baca lengkap.',
             },
           ],
         },
       ],
     });
-    return res.text?.trim() || '';
-  } catch {
-    return 'Hari ini saya fokus membantu penugasan tim di tempat magang.';
+
+    const text = response.text?.trim() || '';
+    return cleanReportText(text);
+  } catch (error) {
+    console.error('Transcribe error:', error);
+    return 'Hari ini saya menyelesaikan tugas operasional dan menyusun draf laporan kegiatan harian pemagangan.';
   }
 }
-
