@@ -3,6 +3,7 @@ import { runWebhookSecurityTests } from './security/webhook.test';
 import { runRlsSimulationTest } from './security/rls.test';
 import { runAuthGuardTests } from './security/auth-guard.test';
 import { runRecapAndDeckTests } from './unit/recap-deck.test';
+import { runSociaBuzzTests } from './unit/sociabuzz.test';
 
 async function main() {
   console.log('====================================================');
@@ -13,6 +14,8 @@ async function main() {
     runJaccardTests();
     console.log('');
     await runWebhookSecurityTests();
+    console.log('');
+    await runSociaBuzzTests();
     console.log('');
     runRlsSimulationTest();
     console.log('');

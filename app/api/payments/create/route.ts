@@ -4,6 +4,10 @@ import {
   generateMidtransOrderId,
   createMidtransQrisCharge,
 } from '@/lib/payments/midtrans';
+import {
+  isSociaBuzzEnabled,
+  createSociaBuzzQrisCharge,
+} from '@/lib/payments/sociabuzz';
 import { serverDb } from '@/lib/server-db';
 
 export async function POST(req: NextRequest) {
@@ -32,8 +36,49 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Buat orderId unik dan panggil Midtrans Core API QRIS dinamis
     const orderId = generateMidtransOrderId();
+
+    // 1. SociaBuzz Payment Gateway (Utama & Default)
+    if (isSociaBuzzEnabled()) {
+      const qrisCharge = await createSociaBuzzQrisCharge({
+        orderId,
+        packageDetails,
+        userEmail: user.email,
+        userName: user.full_name || 'Peserta Magang',
+      });
+
+      await serverDb.createPayment({
+        order_id: orderId,
+        user_id: user.id,
+        user_email: user.email,
+        tier: packageDetails.tierId,
+        gross_amount: packageDetails.price,
+        payment_method: 'sociabuzz_qris',
+        qris_url: qrisCharge.qrImageUrl || qrisCharge.qrString,
+        snap_token: qrisCharge.token,
+        snap_redirect_url: qrisCharge.paymentUrl,
+        note: qrisCharge.invId,
+      });
+
+      return NextResponse.json({
+        status: 'success',
+        order: {
+          orderId,
+          packageCode: packageDetails.code,
+          packageName: packageDetails.label,
+          grossAmount: packageDetails.price,
+          qrString: qrisCharge.qrString,
+          qrImageUrl: qrisCharge.qrImageUrl,
+          expiresAt: qrisCharge.expiresAt,
+          paymentUrl: qrisCharge.paymentUrl,
+          invId: qrisCharge.invId,
+          isMock: false,
+          gatewayMessage: qrisCharge.gatewayMessage,
+        },
+      });
+    }
+
+    // 2. Midtrans Core API (Hanya jika dispesifikasikan secara eksplisit)
     const qrisCharge = await createMidtransQrisCharge({
       orderId,
       packageDetails,
@@ -41,7 +86,6 @@ export async function POST(req: NextRequest) {
       userName: user.full_name || 'Peserta Magang',
     });
 
-    // Simpan order berstatus pending ke database
     await serverDb.createPayment({
       order_id: orderId,
       user_id: user.id,
@@ -69,7 +113,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Create payment error:', error);
     return NextResponse.json(
-      { status: 'error', message: 'Gagal membuat transaksi QRIS Midtrans.' },
+      { status: 'error', message: 'Gagal membuat transaksi QRIS SociaBuzz.' },
       { status: 500 }
     );
   }

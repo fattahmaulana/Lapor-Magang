@@ -43,6 +43,8 @@ interface ActivePaymentOrder {
   qrImageUrl?: string;
   expiresAt: string;
   status: 'pending' | 'settlement' | 'expired' | 'failed';
+  invId?: string;
+  paymentUrl?: string;
   isMock?: boolean;
   gatewayMessage?: string;
 }
@@ -322,6 +324,8 @@ export default function ProfilPage() {
           qrString: data.order.qrString,
           qrImageUrl: data.order.qrImageUrl,
           expiresAt: data.order.expiresAt,
+          invId: data.order.invId,
+          paymentUrl: data.order.paymentUrl,
           status: 'pending',
           isMock: data.order.isMock,
           gatewayMessage: data.order.gatewayMessage,
@@ -330,7 +334,7 @@ export default function ProfilPage() {
         showDialog({
           type: 'error',
           title: 'Gagal Menyiapkan Tagihan',
-          message: data.message || 'Terjadi kendala saat menghubungi gateway Midtrans.',
+          message: data.message || 'Terjadi kendala saat menyiapkan QRIS SociaBuzz.',
         });
       }
     } catch {
@@ -498,7 +502,7 @@ export default function ProfilPage() {
               <div className="flex items-center justify-between border-b border-white/[0.08] pb-3">
                 <div className="text-left">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 block font-mono">
-                    QRIS Dinamis (Midtrans)
+                    QRIS Dinamis (SociaBuzz)
                   </span>
                   <h3 className="text-sm font-bold text-white">Pembayaran Langganan Pro</h3>
                   <span className="text-[9px] text-zinc-500 block">Bukan aplikasi resmi Kemnaker</span>
@@ -511,13 +515,13 @@ export default function ProfilPage() {
                 </button>
               </div>
 
-              {/* Tampilan Gambar QRIS Dinamis Midtrans */}
+              {/* Tampilan Gambar QRIS Dinamis SociaBuzz */}
               {paymentOrder.qrImageUrl && (
                 <div className="mx-auto max-w-[260px] overflow-hidden rounded-2xl border-2 border-white/20 bg-white p-3 shadow-2xl flex flex-col items-center">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={paymentOrder.qrImageUrl}
-                    alt={`QRIS Dinamis Midtrans - ${paymentOrder.packageName}`}
+                    alt={`QRIS Dinamis SociaBuzz - ${paymentOrder.packageName}`}
                     className="w-full h-auto rounded-xl object-contain block"
                   />
                   <span className="text-[9px] text-zinc-600 font-mono mt-1 font-semibold">
@@ -526,12 +530,12 @@ export default function ProfilPage() {
                 </div>
               )}
 
-              {/* Bantuan Simulator Sandbox (Copy QR String) */}
+              {/* Opsi Salin QR String / Info Gateway SociaBuzz */}
               {paymentOrder.qrString && (
                 <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 text-left space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-semibold text-zinc-300">
-                      Uji Coba Sandbox (Simulator)
+                      Kode QRIS SociaBuzz
                     </span>
                     <button
                       type="button"
@@ -543,19 +547,21 @@ export default function ProfilPage() {
                     </button>
                   </div>
                   <p className="text-[10px] text-zinc-400 leading-relaxed">
-                    Di simulator Midtrans Sandbox, masukkan <strong>QR String</strong> di atas ke kolom input simulator (bukan URL gambar).
+                    Pindai gambar QR di atas menggunakan aplikasi m-Banking atau E-Wallet apa saja (BCA, Mandiri, BRI, BNI, GoPay, OVO, DANA, ShopeePay). Batas waktu pembayaran <strong>3 menit</strong> (180 detik).
                   </p>
-                  <a
-                    href="https://simulator.sandbox.midtrans.com/qris/index"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-cyan-400 hover:underline"
-                  >
-                    <span>Buka Midtrans QRIS Simulator</span>
-                    <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
+                  {paymentOrder.paymentUrl && (
+                    <a
+                      href={paymentOrder.paymentUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center justify-center gap-1.5 w-full rounded-xl border border-cyan-500/30 bg-cyan-500/10 py-2 text-xs font-semibold text-cyan-300 hover:bg-cyan-500/20 transition cursor-pointer"
+                    >
+                      <span>Buka Halaman Pembayaran Resmi SociaBuzz</span>
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
                   {paymentOrder.gatewayMessage && (
-                    <div className="text-[10px] text-amber-400 bg-amber-950/40 border border-amber-500/20 rounded-lg p-2 font-mono">
+                    <div className="text-[10px] text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 rounded-lg p-2 font-mono">
                       Info Gateway: {paymentOrder.gatewayMessage}
                     </div>
                   )}
@@ -571,10 +577,10 @@ export default function ProfilPage() {
                 <div className="text-3xl font-extrabold text-cyan-300 tracking-tight">
                   Rp {paymentOrder.grossAmount.toLocaleString('id-ID')}
                 </div>
-                <div className="flex items-center justify-center gap-2 text-[10px] text-zinc-400 font-mono pt-1">
-                  <span>Order: {paymentOrder.orderId}</span>
-                  <span>•</span>
-                  <span>Tanpa Auto-Debit</span>
+                <div className="text-[10px] text-zinc-400 font-mono pt-1 space-y-0.5">
+                  <div className="text-cyan-300/80">Penerima: SociaBuzz (@fxrrel) • PT Komunika Lintas Maya</div>
+                  <div>Order: {paymentOrder.orderId}</div>
+                  {paymentOrder.invId && <div>Invoice SociaBuzz: {paymentOrder.invId}</div>}
                 </div>
               </div>
 
@@ -609,7 +615,7 @@ export default function ProfilPage() {
               className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white text-xs font-bold text-zinc-950 hover:bg-zinc-200 transition shadow-[0_0_20px_rgba(255,255,255,0.2)] disabled:opacity-50 cursor-pointer"
             >
               <QrCode className="h-4 w-4" />
-              <span>{paymentLoading ? 'Menyiapkan QRIS Midtrans...' : 'Bayar dengan QRIS Dinamis'}</span>
+              <span>{paymentLoading ? 'Menyiapkan QRIS SociaBuzz...' : 'Bayar dengan QRIS Dinamis'}</span>
             </button>
           )}
         </div>

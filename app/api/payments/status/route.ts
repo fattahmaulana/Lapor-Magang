@@ -39,6 +39,20 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    // Jika SociaBuzz dan masih pending, periksa status ke gateway secara aktif
+    if (payment.status === 'pending' && payment.payment_method === 'sociabuzz_qris' && payment.snap_token) {
+      const { checkSociaBuzzPaymentStatus } = await import('@/lib/payments/sociabuzz');
+      const invId = payment.note || payment.order_id;
+      const sbStatus = await checkSociaBuzzPaymentStatus(payment.snap_token, invId);
+      if (sbStatus === 'paid') {
+        await serverDb.settlePayment(orderId);
+        payment.status = 'settlement';
+      } else if (sbStatus === 'expired' || sbStatus === 'failed') {
+        await serverDb.updatePaymentStatus(orderId, sbStatus);
+        payment.status = sbStatus;
+      }
+    }
+
     // Refresh status profil user terbaru
     const freshUser = await serverDb.findUserById(user.id);
 

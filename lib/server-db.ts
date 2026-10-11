@@ -743,6 +743,21 @@ export const serverDb = {
     return db.payments.find((p) => p.order_id === orderId) || null;
   },
 
+  async getPaymentByToken(token: string): Promise<PaymentRecord | null> {
+    const supabase = getSupabase();
+    if (supabase) {
+      const { data } = await supabase
+        .from('payments')
+        .select('*')
+        .eq('snap_token', token)
+        .maybeSingle();
+      return data ? (data as PaymentRecord) : null;
+    }
+
+    const db = readDb();
+    return db.payments.find((p) => p.snap_token === token) || null;
+  },
+
   async updatePaymentStatus(
     orderId: string,
     status: 'pending' | 'settlement' | 'expired' | 'failed',
