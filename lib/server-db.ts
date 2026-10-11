@@ -209,6 +209,9 @@ export const serverDb = {
 
       const { data, error } = await supabase.from('profiles').insert(user).select().single();
       if (error) {
+        if (error.message.includes('column') || error.message.includes('foreign key') || error.message.includes('schema cache')) {
+          throw new Error(`Skema database Supabase belum diperbarui: ${error.message}. Silakan jalankan script supabase_schema.sql terbaru di Supabase SQL Editor.`);
+        }
         throw new Error(`Gagal menyimpan ke database Supabase: ${error.message}`);
       }
       return data as UserRecord;
